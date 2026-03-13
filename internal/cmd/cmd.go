@@ -20,6 +20,18 @@ import (
 // Version is set at build time via -ldflags.
 var Version = "dev"
 
+// hasHelpFlag checks if args contain --help or -h anywhere.
+// Go's flag package stops parsing flags after the first non-flag argument,
+// so --help after a positional arg would be ignored.
+func hasHelpFlag(args []string) bool {
+	for _, a := range args {
+		if a == "--help" || a == "-h" {
+			return true
+		}
+	}
+	return false
+}
+
 // Deps holds external dependencies injected from main.
 type Deps struct {
 	Stdout     io.Writer

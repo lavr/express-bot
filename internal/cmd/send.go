@@ -55,6 +55,11 @@ Options:
 		fs.PrintDefaults()
 	}
 
+	if hasHelpFlag(args) {
+		fs.Usage()
+		return nil
+	}
+
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
