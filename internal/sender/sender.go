@@ -61,8 +61,12 @@ func sendWithClient(ctx context.Context, baseURL, token, chatID, message string,
 		return ErrUnauthorized
 	}
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
 		return fmt.Errorf("notification failed: HTTP %d", resp.StatusCode)
+	}
+
+	if resp.StatusCode == http.StatusAccepted {
+		return nil
 	}
 
 	var result sendResponse

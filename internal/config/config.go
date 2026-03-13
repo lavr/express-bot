@@ -28,13 +28,12 @@ type CacheConfig struct {
 
 // Flags holds CLI flag values for layering on top of file/env config.
 type Flags struct {
-	ConfigPath  string
-	Host        string
-	BotID       string
-	Secret      string
-	ChatID      string
-	NoCache     bool
-	MessageFrom string
+	ConfigPath string
+	Host       string
+	BotID      string
+	Secret     string
+	ChatID     string
+	NoCache    bool
 }
 
 // Load reads configuration with layering: YAML file → env vars → CLI flags.
@@ -79,11 +78,16 @@ func Load(flags Flags) (*Config, error) {
 	if cfg.Secret == "" {
 		return nil, fmt.Errorf("secret is required (--secret, EXPRESS_SECRET, or config file)")
 	}
-	if cfg.ChatID == "" {
-		return nil, fmt.Errorf("chat_id is required (--chat-id, EXPRESS_CHAT_ID, or config file)")
-	}
 
 	return cfg, nil
+}
+
+// RequireChatID returns an error if ChatID is empty.
+func (c *Config) RequireChatID() error {
+	if c.ChatID == "" {
+		return fmt.Errorf("chat_id is required (--chat-id, EXPRESS_CHAT_ID, or config file)")
+	}
+	return nil
 }
 
 func defaultConfigPath() string {

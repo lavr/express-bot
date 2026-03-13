@@ -1,8 +1,8 @@
-# express-send
+# express-bot
 
-CLI-утилита для отправки сообщений в корпоративный мессенджер eXpress через BotX API.
+CLI-утилита для работы с корпоративным мессенджером eXpress через BotX API.
 
-Работает в стиле Unix: принимает текст из аргумента, файла или stdin, конфигурируется через файл, переменные окружения и флаги.
+Поддерживает отправку сообщений в чаты и получение информации о боте. Работает в стиле Unix: принимает текст из аргумента, файла или stdin, конфигурируется через файл, переменные окружения и флаги.
 
 ## Установка
 
@@ -15,30 +15,52 @@ go install github.com/lavr/express-send@latest
 ```bash
 git clone https://github.com/lavr/express-send.git
 cd express-send
-go build -o express-send .
+go build -o express-bot .
 ```
 
 ## Использование
 
 ```bash
+express-bot <command> [options]
+```
+
+### Команды
+
+| Команда | Описание |
+|---|---|
+| `send` | Отправить сообщение в чат |
+| `chats list` | Показать список чатов бота |
+
+### send — отправка сообщений
+
+```bash
 # Текст как аргумент
-express-send "Сборка #42 прошла успешно"
+express-bot send "Сборка #42 прошла успешно"
 
 # Несколько слов без кавычек тоже работают
-express-send Deploy finished successfully
+express-bot send Deploy finished successfully
 
 # Из файла
-express-send --message-from report.txt
+express-bot send --message-from report.txt
 
 # Из stdin (пайплайн)
-echo "Deploy OK" | express-send
-cat changelog.md | express-send
+echo "Deploy OK" | express-bot send
+cat changelog.md | express-bot send
 
 # Всё через флаги
-express-send --host express.company.ru --bot-id UUID --secret KEY --chat-id UUID "Hello"
+express-bot send --host express.company.ru --bot-id UUID --secret KEY --chat-id UUID "Hello"
 ```
 
 При успехе утилита завершается молча (exit 0). Ошибки выводятся в stderr (exit 1).
+
+### chats list — список чатов
+
+```bash
+express-bot chats list
+express-bot chats list --config /path/to/config.yaml
+```
+
+Выводит список чатов, в которых состоит бот (имя, тип, количество участников).
 
 ## Конфигурация
 
@@ -80,16 +102,21 @@ cache:
 | `EXPRESS_CACHE_VAULT_PATH` | Путь в Vault KV v2 |
 | `EXPRESS_CACHE_TTL` | TTL кэша в секундах |
 
-### Флаги
+### Общие флаги
 
 ```
 --host          хост сервера eXpress
 --bot-id        UUID бота
 --secret        секрет бота (литерал, env:VAR или vault:path#key)
---chat-id       UUID целевого чата
---message-from  прочитать сообщение из файла
 --config        путь к файлу конфигурации
 --no-cache      отключить кэширование токена
+```
+
+### Флаги команды send
+
+```
+--chat-id       UUID целевого чата
+--message-from  прочитать сообщение из файла
 ```
 
 ## Секреты
@@ -98,13 +125,13 @@ cache:
 
 ```bash
 # Литеральное значение
-express-send --secret "my-secret-key" "Hello"
+express-bot send --secret "my-secret-key" "Hello"
 
 # Из переменной окружения
-express-send --secret env:EXPRESS_BOT_SECRET "Hello"
+express-bot send --secret env:EXPRESS_BOT_SECRET "Hello"
 
 # Из HashiCorp Vault (KV v2)
-express-send --secret "vault:secret/data/express#bot_secret" "Hello"
+express-bot send --secret "vault:secret/data/express#bot_secret" "Hello"
 ```
 
 Для Vault необходимы переменные `VAULT_ADDR` и `VAULT_TOKEN`.
@@ -139,7 +166,7 @@ cache:
 ### Отключение кэша
 
 ```bash
-express-send --no-cache "Hello"
+express-bot send --no-cache "Hello"
 ```
 
 Или в конфиге: `cache.type: none` (значение по умолчанию).
@@ -147,19 +174,22 @@ express-send --no-cache "Hello"
 ## Как это работает
 
 1. Загрузка конфигурации (YAML + env + флаги)
-2. Чтение сообщения (файл / аргумент / stdin)
+2. Чтение сообщения (файл / аргумент / stdin) — для `send`
 3. Разрешение секрета (литерал / env / Vault)
 4. Подпись HMAC-SHA256: `HMAC(key=secret, msg=bot_id)` — hex uppercase
 5. Получение токена: `GET /api/v2/botx/bots/{bot_id}/token?signature={sig}`
-6. Отправка: `POST /api/v4/botx/notifications/direct` с `Authorization: Bearer {token}`
-7. При ответе 401 — автоматический повтор с новым токеном (один раз)
+6. Выполнение команды:
+   - `send`: `POST /api/v4/botx/notifications/direct` с `Authorization: Bearer {token}`
+   - `chats list`: `GET /api/v3/botx/chats/list`
+7. При ответе 401 — автоматический повтор с новым токеном (один раз, только для `send`)
 
 ## Структура проекта
 
 ```
 express-send/
-  main.go                       # точка входа: флаги, конфиг, основной flow
+  main.go                       # точка входа: субкоманды send, chats
   internal/
+    botapi/client.go            # API-клиент: ListChats(), SendNotification()
     config/config.go            # Config struct, Load() — YAML/env/flag layering
     secret/secret.go            # Resolve(): литерал / env:VAR / vault:path#key
     auth/auth.go                # BuildSignature(), GetToken()
@@ -167,7 +197,6 @@ express-send/
       cache.go                  #   интерфейс Cache + NoopCache
       file.go                   #   файловый кэш
       vault.go                  #   Vault KV v2 кэш
-    sender/sender.go            # Send() — POST notification
     input/input.go              # ReadMessage() — arg/file/stdin
 ```
 

@@ -116,10 +116,9 @@ func TestLoad_MissingRequired(t *testing.T) {
 		flags Flags
 		want  string
 	}{
-		{"no host", Flags{BotID: "b", Secret: "s", ChatID: "c"}, "host is required"},
-		{"no bot_id", Flags{Host: "h", Secret: "s", ChatID: "c"}, "bot_id is required"},
-		{"no secret", Flags{Host: "h", BotID: "b", ChatID: "c"}, "secret is required"},
-		{"no chat_id", Flags{Host: "h", BotID: "b", Secret: "s"}, "chat_id is required"},
+		{"no host", Flags{BotID: "b", Secret: "s"}, "host is required"},
+		{"no bot_id", Flags{Host: "h", Secret: "s"}, "bot_id is required"},
+		{"no secret", Flags{Host: "h", BotID: "b"}, "secret is required"},
 	}
 
 	for _, tt := range tests {
@@ -132,6 +131,18 @@ func TestLoad_MissingRequired(t *testing.T) {
 				t.Errorf("error = %q, should contain %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestRequireChatID(t *testing.T) {
+	cfg := &Config{ChatID: ""}
+	if err := cfg.RequireChatID(); err == nil {
+		t.Fatal("expected error for empty ChatID")
+	}
+
+	cfg.ChatID = "some-chat"
+	if err := cfg.RequireChatID(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
