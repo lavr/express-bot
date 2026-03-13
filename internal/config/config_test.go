@@ -311,8 +311,8 @@ func TestLoad_DefaultCacheTTL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
-	if cfg.Cache.TTL != 3600 {
-		t.Errorf("Cache.TTL = %d, want 3600 (default)", cfg.Cache.TTL)
+	if cfg.Cache.TTL != 31536000 {
+		t.Errorf("Cache.TTL = %d, want 31536000 (default)", cfg.Cache.TTL)
 	}
 }
 
