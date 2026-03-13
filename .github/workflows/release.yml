@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - "v*"
+      - "[0-9]*"
 
 permissions:
   contents: write
@@ -39,7 +39,7 @@ jobs:
         run: |
           EXT=""
           if [ "$GOOS" = "windows" ]; then EXT=".exe"; fi
-          go build -ldflags="-s -w -X main.version=${GITHUB_REF_NAME#v}" -o "express-bot${EXT}" .
+          go build -ldflags="-s -w -X main.version=${GITHUB_REF_NAME}" -o "express-bot${EXT}" .
 
       - name: Archive
         env:
@@ -96,7 +96,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${GITHUB_REF_NAME}"
           TAG="${GITHUB_REF_NAME}"
 
           cat > express-bot.rb << 'FORMULA'
@@ -156,3 +156,32 @@ jobs:
             --field message="express-bot ${TAG}" \
             --field content="$(base64 -w0 express-bot.rb)" \
             --field branch="master"
+
+  docker:
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: VERSION=${{ github.ref_name }}
+          tags: |
+            lavr/express-bot:${{ github.ref_name }}
+            lavr/express-bot:latest
