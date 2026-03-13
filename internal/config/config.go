@@ -120,7 +120,7 @@ func Load(flags Flags) (*Config, error) {
 		return nil, fmt.Errorf("host is required (--host, EXPRESS_HOST, or config file)")
 	}
 	if cfg.BotID == "" {
-		return nil, fmt.Errorf("bot id is required (--bot-id, EXPRESS_BOT_ID, or config file)")
+		return nil, fmt.Errorf("bot id is required (--bot-uuid, EXPRESS_BOT_ID, or config file)")
 	}
 	if cfg.BotSecret == "" {
 		return nil, fmt.Errorf("bot secret is required (--secret, EXPRESS_SECRET, or config file)")

@@ -53,7 +53,7 @@ echo "Deploy OK" | express-bot send message
 cat changelog.md | express-bot send message
 
 # Всё через флаги
-express-bot send message --host express.company.ru --bot-id UUID --secret KEY --chat-id UUID "Hello"
+express-bot send message --host express.company.ru --bot-uuid UUID --secret KEY --chat-id UUID "Hello"
 ```
 
 При успехе утилита завершается молча (exit 0). Ошибки выводятся в stderr (exit 1).
@@ -177,7 +177,7 @@ cache:
 
 ```
 --host          хост сервера eXpress
---bot-id        UUID бота
+--bot-uuid        UUID бота
 --secret        секрет бота (литерал, env:VAR или vault:path#key)
 --config        путь к файлу конфигурации
 --no-cache      отключить кэширование токена
