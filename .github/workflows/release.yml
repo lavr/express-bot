@@ -100,7 +100,7 @@ jobs:
           TAG="${GITHUB_REF_NAME}"
 
           cat > express-botx.rb << 'FORMULA'
-          class ExpressBot < Formula
+          class ExpressBotx < Formula
             desc "CLI and HTTP server for sending messages to eXpress"
             homepage "https://github.com/lavr/express-botx"
             version "VERSION_PLACEHOLDER"
