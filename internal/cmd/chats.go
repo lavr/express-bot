@@ -200,12 +200,14 @@ func runChatsAliasList(args []string, deps Deps) error {
 	type aliasEntry struct {
 		Name string `json:"name"`
 		UUID string `json:"uuid"`
+		Bot  string `json:"bot,omitempty"`
 	}
 
 	entries := make([]aliasEntry, 0, len(cfg.Chats))
-	names := sortedKeys(cfg.Chats)
+	names := sortedChatKeys(cfg.Chats)
 	for _, name := range names {
-		entries = append(entries, aliasEntry{Name: name, UUID: cfg.Chats[name]})
+		chat := cfg.Chats[name]
+		entries = append(entries, aliasEntry{Name: name, UUID: chat.ID, Bot: chat.Bot})
 	}
 
 	return printOutput(deps.Stdout, cfg.Format, func() {
@@ -216,7 +218,11 @@ func runChatsAliasList(args []string, deps Deps) error {
 		}
 		fmt.Fprintf(deps.Stdout, "Chat aliases (%d):\n", len(entries))
 		for _, e := range entries {
-			fmt.Fprintf(deps.Stdout, "  %-20s %s\n", e.Name, e.UUID)
+			if e.Bot != "" {
+				fmt.Fprintf(deps.Stdout, "  %-20s %s  (bot: %s)\n", e.Name, e.UUID, e.Bot)
+			} else {
+				fmt.Fprintf(deps.Stdout, "  %-20s %s\n", e.Name, e.UUID)
+			}
 		}
 	}, entries)
 }
@@ -226,7 +232,9 @@ func runChatsAliasSet(args []string, deps Deps) error {
 	fs.SetOutput(deps.Stderr)
 	var flags config.Flags
 
+	var botFlag string
 	fs.StringVar(&flags.ConfigPath, "config", "", "path to config file")
+	fs.StringVar(&botFlag, "bot", "", "default bot for this chat")
 	fs.Usage = func() {
 		fmt.Fprintf(deps.Stderr, "Usage: express-botx chats alias set <name> <uuid> [options]\n\nAdd or update a chat alias in the config file.\n\nOptions:\n")
 		fs.PrintDefaults()
@@ -240,7 +248,7 @@ func runChatsAliasSet(args []string, deps Deps) error {
 	}
 
 	if fs.NArg() != 2 {
-		return fmt.Errorf("usage: chats alias set <name> <uuid>")
+		return fmt.Errorf("usage: chats alias set <name> <uuid> [--bot <bot>]")
 	}
 	name := fs.Arg(0)
 	uuid := fs.Arg(1)
@@ -251,20 +259,31 @@ func runChatsAliasSet(args []string, deps Deps) error {
 	}
 
 	if cfg.Chats == nil {
-		cfg.Chats = make(map[string]string)
+		cfg.Chats = make(map[string]config.ChatConfig)
 	}
 
 	action := "added"
-	if _, exists := cfg.Chats[name]; exists {
+	existing, exists := cfg.Chats[name]
+	if exists {
 		action = "updated"
 	}
-	cfg.Chats[name] = uuid
+
+	// Preserve existing bot binding if --bot not explicitly provided
+	bot := botFlag
+	if bot == "" && exists {
+		bot = existing.Bot
+	}
+	cfg.Chats[name] = config.ChatConfig{ID: uuid, Bot: bot}
 
 	if err := cfg.SaveConfig(); err != nil {
 		return err
 	}
 
-	fmt.Fprintf(deps.Stdout, "Alias %s: %s -> %s\n", action, name, uuid)
+	out := fmt.Sprintf("Alias %s: %s -> %s", action, name, uuid)
+	if botFlag != "" {
+		out += fmt.Sprintf(" (bot: %s)", botFlag)
+	}
+	fmt.Fprintln(deps.Stdout, out)
 	return nil
 }
 
@@ -313,7 +332,7 @@ func runChatsAliasRm(args []string, deps Deps) error {
 	return nil
 }
 
-func sortedKeys(m map[string]string) []string {
+func sortedChatKeys(m map[string]config.ChatConfig) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)

@@ -547,3 +547,69 @@ server:
 		t.Fatalf("expected 401 with no key, got %d", resp.StatusCode)
 	}
 }
+
+func TestServeIntegration_ChatBoundBot(t *testing.T) {
+	mock := newMockBotxAPI()
+	botxSrv := httptest.NewServer(mock.handler())
+	defer botxSrv.Close()
+
+	port := freePort(t)
+	listenAddr := fmt.Sprintf("127.0.0.1:%d", port)
+
+	cfgPath := writeTestConfig(t, fmt.Sprintf(`
+bots:
+  deploy-bot:
+    host: %s
+    id: bot-deploy
+    secret: secret-deploy
+  alert-bot:
+    host: %s
+    id: bot-alert
+    secret: secret-alert
+chats:
+  deploy:
+    id: a0000000-0000-0000-0000-000000000001
+    bot: deploy-bot
+  alerts:
+    id: b0000000-0000-0000-0000-000000000002
+    bot: alert-bot
+  general: c0000000-0000-0000-0000-000000000003
+server:
+  listen: "%s"
+  api_keys:
+    - name: test
+      key: test-key
+  alertmanager:
+    default_chat_id: alerts
+`, botxSrv.URL, botxSrv.URL, listenAddr))
+
+	startServe(t, []string{"--config", cfgPath, "--listen", listenAddr, "--no-cache"})
+	baseURL := fmt.Sprintf("http://%s/api/v1", listenAddr)
+
+	// 1. Chat with bound bot — no "bot" needed
+	code, resp := doPost(t, baseURL+"/send", "test-key", `{"chat_id":"deploy","message":"via chat binding"}`)
+	if code != 200 {
+		t.Fatalf("expected 200 for chat-bound bot, got %d: %v", code, resp)
+	}
+
+	// 2. Chat without bound bot — "bot" is required
+	code, resp = doPost(t, baseURL+"/send", "test-key", `{"chat_id":"general","message":"hi"}`)
+	if code != 400 {
+		t.Fatalf("expected 400 for unbound chat without bot, got %d: %v", code, resp)
+	}
+
+	// 3. Explicit "bot" overrides chat binding
+	mock.resetCalls()
+	code, resp = doPost(t, baseURL+"/send", "test-key", `{"bot":"alert-bot","chat_id":"deploy","message":"override"}`)
+	if code != 200 {
+		t.Fatalf("expected 200 for explicit bot override, got %d: %v", code, resp)
+	}
+
+	// 4. Alertmanager uses chat-bound bot from default_chat_id
+	mock.resetCalls()
+	alertPayload := `{"version":"4","groupKey":"g","status":"firing","receiver":"x","groupLabels":{"alertname":"Test"},"alerts":[{"status":"firing","labels":{"alertname":"CPU","severity":"critical","instance":"x"},"annotations":{"summary":"hi"},"startsAt":"2026-01-01T00:00:00Z"}]}`
+	code, resp = doPost(t, baseURL+"/alertmanager", "test-key", alertPayload)
+	if code != 200 {
+		t.Fatalf("expected 200 for alertmanager with chat-bound bot, got %d: %v", code, resp)
+	}
+}

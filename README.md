@@ -68,7 +68,9 @@ config:
       id: "bot-uuid"
       secret: "bot-secret"
   chats:
-    ops-alerts: "chat-uuid"
+    ops-alerts:
+      id: "chat-uuid"
+      bot: prod
   server:
     listen: ":8080"
     base_path: /api/v1
@@ -193,7 +195,7 @@ docker run --rm -p 8080:8080 -v ./config.yaml:/config.yaml lavr/express-botx \
 
 Параметры загружаются слоями, каждый следующий перекрывает предыдущий:
 
-1. **YAML-файл** (`express-botx.yaml` в текущей директории или `~/.config/express-botx/config.yaml`)
+1. **YAML-файл** (`--config`, `EXPRESS_BOTX_CONFIG`, `./express-botx.yaml` или `~/.config/express-botx/config.yaml`)
 2. **Переменные окружения**
 3. **Флаги командной строки**
 
@@ -201,14 +203,26 @@ docker run --rm -p 8080:8080 -v ./config.yaml:/config.yaml lavr/express-botx \
 
 ```yaml
 bots:
-  mybot:
-    host: express.company.ru
+  deploy-bot:
+    host: express.company.ru              # или http://localhost:8080 для dev
     id: 054af49e-5e18-4dca-ad73-4f96b6de63fa
     secret: my-bot-secret
+  alert-bot:
+    host: express.company.ru
+    id: 99887766-5544-3322-1100-aabbccddeeff
+    secret: env:ALERT_SECRET              # из переменной окружения
 
 chats:
-  ops-alerts: 1a2b3c4d-5e6f-7890-abcd-ef1234567890
-  deploy: 2b3c4d5e-6f7a-8901-bcde-f12345678901
+  # Короткая форма: только UUID
+  general: 1a2b3c4d-5e6f-7890-abcd-ef1234567890
+
+  # С привязкой к боту: бот подставляется автоматически
+  deploy:
+    id: 2b3c4d5e-6f7a-8901-bcde-f12345678901
+    bot: deploy-bot
+  alerts:
+    id: 3c4d5e6f-7a8b-9012-cdef-123456789012
+    bot: alert-bot
 
 cache:
   type: file                              # none | file | vault (по умолчанию: file)
@@ -222,22 +236,57 @@ server:
     - name: monitoring
       key: env:MONITORING_API_KEY
   alertmanager:
-    default_chat_id: ops-alerts           # UUID или алиас (опционально)
+    default_chat_id: alerts               # UUID или алиас (опционально)
     error_severities: [critical, warning] # по умолчанию
   grafana:
-    default_chat_id: ops-alerts
+    default_chat_id: alerts
     error_states: [alerting]              # по умолчанию
+```
+
+### Мульти-бот конфигурация
+
+При нескольких ботах выбор бота определяется по приоритету:
+
+1. Явный `--bot` (CLI) или `"bot"` (API) / `?bot=` (webhooks)
+2. Привязка бота к чату (`chats.deploy.bot: deploy-bot`)
+3. Единственный бот (авто-выбор)
+4. Ошибка
+
+```bash
+# Бот из привязки чата — --bot не нужен
+express-botx send --chat-id deploy "OK"
+
+# Явный --bot переопределяет привязку
+express-botx send --bot alert-bot --chat-id deploy "Срочно!"
+
+# HTTP API — аналогично
+curl /api/v1/send -d '{"chat_id":"deploy","message":"OK"}'
+curl /api/v1/send -d '{"bot":"alert-bot","chat_id":"deploy","message":"!"}'
+curl /api/v1/alertmanager?bot=deploy-bot
+```
+
+`host` поддерживает полный URL для dev/staging:
+
+```yaml
+bots:
+  local:
+    host: http://localhost:8080    # HTTP + порт
+  staging:
+    host: https://staging.company.ru:8443
+  prod:
+    host: express.company.ru       # → https://express.company.ru
 ```
 
 По умолчанию кэш пишется в файл `.express-botx-token-cache.json` в текущей директории.
 
-Путь к конфигу можно указать явно: `--config /path/to/config.yaml`
+Путь к конфигу: `--config /path/to/config.yaml` или `EXPRESS_BOTX_CONFIG=/path/to/config.yaml`
 
 ### Переменные окружения
 
 | Переменная | Описание |
 |---|---|
-| `EXPRESS_BOTX_HOST` | Хост сервера eXpress |
+| `EXPRESS_BOTX_CONFIG` | Путь к файлу конфигурации |
+| `EXPRESS_BOTX_HOST` | Хост сервера eXpress (или URL: `http://host:port`) |
 | `EXPRESS_BOTX_BOT_ID` | UUID бота |
 | `EXPRESS_BOTX_SECRET` | Секрет бота |
 | `EXPRESS_BOTX_CACHE_TYPE` | Тип кэша: `none`, `file`, `vault` |

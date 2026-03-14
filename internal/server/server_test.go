@@ -25,11 +25,11 @@ func newTestServer(keys []ResolvedKey, opts ...func(*Config)) *Server {
 	sendFn := func(ctx context.Context, p *SendPayload) (string, error) {
 		return "test-sync-id", nil
 	}
-	chatResolver := func(chatID string) (string, error) {
+	chatResolver := func(chatID string) (ChatResolveResult, error) {
 		if chatID == "unknown-alias" {
-			return "", fmt.Errorf("unknown chat alias %q", chatID)
+			return ChatResolveResult{}, fmt.Errorf("unknown chat alias %q", chatID)
 		}
-		return chatID, nil
+		return ChatResolveResult{ChatID: chatID}, nil
 	}
 	return New(cfg, sendFn, chatResolver)
 }
@@ -44,8 +44,8 @@ func newTestServerWithOpts(keys []ResolvedKey, srvOpts ...Option) *Server {
 	sendFn := func(ctx context.Context, p *SendPayload) (string, error) {
 		return "test-sync-id", nil
 	}
-	chatResolver := func(chatID string) (string, error) {
-		return chatID, nil
+	chatResolver := func(chatID string) (ChatResolveResult, error) {
+		return ChatResolveResult{ChatID: chatID}, nil
 	}
 	return New(cfg, sendFn, chatResolver, srvOpts...)
 }
@@ -357,7 +357,7 @@ func TestSend_UpstreamError(t *testing.T) {
 	failSend := func(ctx context.Context, p *SendPayload) (string, error) {
 		return "", fmt.Errorf("connection refused")
 	}
-	chatResolver := func(chatID string) (string, error) { return chatID, nil }
+	chatResolver := func(chatID string) (ChatResolveResult, error) { return ChatResolveResult{ChatID: chatID}, nil }
 	srv := New(cfg, failSend, chatResolver)
 
 	body := `{"chat_id":"chat-1","message":"hi"}`
@@ -383,7 +383,7 @@ func TestSend_CustomBasePath(t *testing.T) {
 		Keys:     []ResolvedKey{{Name: "t", Key: "k"}},
 	}
 	sendFn := func(ctx context.Context, p *SendPayload) (string, error) { return "id", nil }
-	chatResolver := func(chatID string) (string, error) { return chatID, nil }
+	chatResolver := func(chatID string) (ChatResolveResult, error) { return ChatResolveResult{ChatID: chatID}, nil }
 	srv := New(cfg, sendFn, chatResolver)
 
 	body := `{"chat_id":"chat-1","message":"hi"}`
@@ -592,7 +592,7 @@ func TestAlertmanager_ChatIDQueryParam(t *testing.T) {
 		lastChatID = p.ChatID
 		return "id", nil
 	}
-	chatResolver := func(chatID string) (string, error) { return chatID, nil }
+	chatResolver := func(chatID string) (ChatResolveResult, error) { return ChatResolveResult{ChatID: chatID}, nil }
 	srv := New(cfg, sendFn, chatResolver, WithAlertmanager(amCfg))
 
 	body := alertmanagerPayload("firing", AlertItem{
@@ -672,7 +672,7 @@ func TestAlertmanager_CustomTemplate(t *testing.T) {
 		lastMsg = p.Message
 		return "id", nil
 	}
-	chatResolver := func(chatID string) (string, error) { return chatID, nil }
+	chatResolver := func(chatID string) (ChatResolveResult, error) { return ChatResolveResult{ChatID: chatID}, nil }
 	srv := New(cfg, sendFn, chatResolver, WithAlertmanager(amCfg))
 
 	body := alertmanagerPayload("firing", AlertItem{
@@ -882,7 +882,7 @@ func TestGrafana_ChatIDQueryParam(t *testing.T) {
 		lastChatID = p.ChatID
 		return "id", nil
 	}
-	chatResolver := func(chatID string) (string, error) { return chatID, nil }
+	chatResolver := func(chatID string) (ChatResolveResult, error) { return ChatResolveResult{ChatID: chatID}, nil }
 	srv := New(cfg, sendFn, chatResolver, WithGrafana(grCfg))
 
 	body := grafanaPayload("firing", "alerting", "test", GrafanaAlertItem{
@@ -962,7 +962,7 @@ func TestGrafana_CustomTemplate(t *testing.T) {
 		lastMsg = p.Message
 		return "id", nil
 	}
-	chatResolver := func(chatID string) (string, error) { return chatID, nil }
+	chatResolver := func(chatID string) (ChatResolveResult, error) { return ChatResolveResult{ChatID: chatID}, nil }
 	srv := New(cfg, sendFn, chatResolver, WithGrafana(grCfg))
 
 	body := grafanaPayload("firing", "alerting", "[FIRING:1] DiskFull", GrafanaAlertItem{
@@ -994,8 +994,8 @@ func newMultiBotTestServer(keys []ResolvedKey) *Server {
 	sendFn := func(ctx context.Context, p *SendPayload) (string, error) {
 		return "sync-" + p.Bot, nil
 	}
-	chatResolver := func(chatID string) (string, error) {
-		return chatID, nil
+	chatResolver := func(chatID string) (ChatResolveResult, error) {
+		return ChatResolveResult{ChatID: chatID}, nil
 	}
 	return New(cfg, sendFn, chatResolver)
 }
@@ -1061,6 +1061,144 @@ func TestSend_SingleBot_BotFieldOptional(t *testing.T) {
 	}
 }
 
+func TestSend_MultiBot_ChatBoundBot(t *testing.T) {
+	// Chat resolver returns a bound bot — no need for explicit "bot" in request
+	cfg := Config{
+		Listen:   ":0",
+		BasePath: "/api/v1",
+		Keys:     []ResolvedKey{{Name: "t", Key: "k"}},
+		BotNames: []string{"prod", "test"},
+	}
+	var lastBot string
+	sendFn := func(ctx context.Context, p *SendPayload) (string, error) {
+		lastBot = p.Bot
+		return "id", nil
+	}
+	chatResolver := func(chatID string) (ChatResolveResult, error) {
+		if chatID == "deploy" {
+			return ChatResolveResult{ChatID: "uuid-deploy", Bot: "prod"}, nil
+		}
+		return ChatResolveResult{ChatID: chatID}, nil
+	}
+	srv := New(cfg, sendFn, chatResolver)
+
+	// No "bot" in request, but chat has bound bot → should succeed
+	body := `{"chat_id":"deploy","message":"hi"}`
+	w := doRequest(srv, "POST", "/api/v1/send", strings.NewReader(body), map[string]string{
+		"X-API-Key":    "k",
+		"Content-Type": "application/json",
+	})
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if lastBot != "prod" {
+		t.Errorf("expected bot=prod from chat binding, got %q", lastBot)
+	}
+
+	// Explicit "bot" overrides chat binding
+	body = `{"bot":"test","chat_id":"deploy","message":"hi"}`
+	w = doRequest(srv, "POST", "/api/v1/send", strings.NewReader(body), map[string]string{
+		"X-API-Key":    "k",
+		"Content-Type": "application/json",
+	})
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if lastBot != "test" {
+		t.Errorf("expected bot=test from explicit override, got %q", lastBot)
+	}
+}
+
+func TestSend_SingleBot_RejectsMismatchedChatBot(t *testing.T) {
+	cfg := Config{
+		Listen:        ":0",
+		BasePath:      "/api/v1",
+		Keys:          []ResolvedKey{{Name: "t", Key: "k"}},
+		SingleBotName: "prod",
+	}
+	sendFn := func(ctx context.Context, p *SendPayload) (string, error) {
+		return "id", nil
+	}
+	// Chat resolver returns a bot binding that doesn't match the single bot
+	chatResolver := func(chatID string) (ChatResolveResult, error) {
+		if chatID == "alerts" {
+			return ChatResolveResult{ChatID: "uuid-alerts", Bot: "alert-bot"}, nil
+		}
+		return ChatResolveResult{ChatID: chatID}, nil
+	}
+	srv := New(cfg, sendFn, chatResolver)
+
+	// Chat bound to "alert-bot" but server runs as "prod" → should fail
+	body := `{"chat_id":"alerts","message":"hi"}`
+	w := doRequest(srv, "POST", "/api/v1/send", strings.NewReader(body), map[string]string{
+		"X-API-Key":    "k",
+		"Content-Type": "application/json",
+	})
+	if w.Code != 400 {
+		t.Fatalf("expected 400 for mismatched chat-bound bot, got %d: %s", w.Code, w.Body.String())
+	}
+	resp := parseResponse(t, w)
+	if !strings.Contains(resp.Error, "not available") {
+		t.Errorf("expected 'not available' error, got: %s", resp.Error)
+	}
+
+	// Chat without binding → should pass
+	body = `{"chat_id":"general","message":"hi"}`
+	w = doRequest(srv, "POST", "/api/v1/send", strings.NewReader(body), map[string]string{
+		"X-API-Key":    "k",
+		"Content-Type": "application/json",
+	})
+	if w.Code != 200 {
+		t.Fatalf("expected 200 for unbound chat, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestSend_SingleBot_EnvFlags_RejectsChatBoundBot(t *testing.T) {
+	// Server started from env/flags — SingleBotName is empty.
+	// Chat has a bot binding → should be rejected because env/flags sender
+	// is not a named bot and cannot serve named bot requests.
+	cfg := Config{
+		Listen:   ":0",
+		BasePath: "/api/v1",
+		Keys:     []ResolvedKey{{Name: "t", Key: "k"}},
+		// SingleBotName deliberately empty (env/flags mode)
+	}
+	sendFn := func(ctx context.Context, p *SendPayload) (string, error) {
+		return "id", nil
+	}
+	chatResolver := func(chatID string) (ChatResolveResult, error) {
+		if chatID == "alerts" {
+			return ChatResolveResult{ChatID: "uuid-alerts", Bot: "alert-bot"}, nil
+		}
+		return ChatResolveResult{ChatID: chatID}, nil
+	}
+	srv := New(cfg, sendFn, chatResolver)
+
+	// Chat bound to "alert-bot" but server has no named bot → 400
+	body := `{"chat_id":"alerts","message":"hi"}`
+	w := doRequest(srv, "POST", "/api/v1/send", strings.NewReader(body), map[string]string{
+		"X-API-Key":    "k",
+		"Content-Type": "application/json",
+	})
+	if w.Code != 400 {
+		t.Fatalf("expected 400 for chat-bound bot with unnamed sender, got %d: %s", w.Code, w.Body.String())
+	}
+	resp := parseResponse(t, w)
+	if !strings.Contains(resp.Error, "not available") {
+		t.Errorf("expected 'not available' error, got: %s", resp.Error)
+	}
+
+	// Chat without binding → should pass
+	body = `{"chat_id":"general","message":"hi"}`
+	w = doRequest(srv, "POST", "/api/v1/send", strings.NewReader(body), map[string]string{
+		"X-API-Key":    "k",
+		"Content-Type": "application/json",
+	})
+	if w.Code != 200 {
+		t.Fatalf("expected 200 for unbound chat, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestAlertmanager_MultiBot_RequiresBot(t *testing.T) {
 	amCfg := testAlertmanagerConfig(t)
 	cfg := Config{
@@ -1072,7 +1210,7 @@ func TestAlertmanager_MultiBot_RequiresBot(t *testing.T) {
 	sendFn := func(ctx context.Context, p *SendPayload) (string, error) {
 		return "id", nil
 	}
-	chatResolver := func(chatID string) (string, error) { return chatID, nil }
+	chatResolver := func(chatID string) (ChatResolveResult, error) { return ChatResolveResult{ChatID: chatID}, nil }
 	srv := New(cfg, sendFn, chatResolver, WithAlertmanager(amCfg))
 
 	body := alertmanagerPayload("firing", AlertItem{
@@ -1111,7 +1249,7 @@ func TestGrafana_MultiBot_RequiresBot(t *testing.T) {
 	sendFn := func(ctx context.Context, p *SendPayload) (string, error) {
 		return "id", nil
 	}
-	chatResolver := func(chatID string) (string, error) { return chatID, nil }
+	chatResolver := func(chatID string) (ChatResolveResult, error) { return ChatResolveResult{ChatID: chatID}, nil }
 	srv := New(cfg, sendFn, chatResolver, WithGrafana(grCfg))
 
 	body := grafanaPayload("firing", "alerting", "test", GrafanaAlertItem{
@@ -1152,7 +1290,7 @@ func TestAuth_BotSignature_Multiple(t *testing.T) {
 		lastBot = p.Bot
 		return "id", nil
 	}
-	chatResolver := func(chatID string) (string, error) { return chatID, nil }
+	chatResolver := func(chatID string) (ChatResolveResult, error) { return ChatResolveResult{ChatID: chatID}, nil }
 	srv := New(cfg, sendFn, chatResolver)
 
 	// Prod signature works and binds to prod bot
@@ -1201,7 +1339,7 @@ func TestAuth_BotSignature_PrivilegeEscalation(t *testing.T) {
 	sendFn := func(ctx context.Context, p *SendPayload) (string, error) {
 		return "id", nil
 	}
-	chatResolver := func(chatID string) (string, error) { return chatID, nil }
+	chatResolver := func(chatID string) (ChatResolveResult, error) { return ChatResolveResult{ChatID: chatID}, nil }
 	srv := New(cfg, sendFn, chatResolver)
 
 	// Authenticated as test, trying to send as prod — should be rejected
@@ -1237,7 +1375,7 @@ func TestGrafana_StatusSentToUpstream(t *testing.T) {
 		lastStatus = p.Status
 		return "id", nil
 	}
-	chatResolver := func(chatID string) (string, error) { return chatID, nil }
+	chatResolver := func(chatID string) (ChatResolveResult, error) { return ChatResolveResult{ChatID: chatID}, nil }
 	srv := New(cfg, sendFn, chatResolver, WithGrafana(grCfg))
 
 	// Firing with state=alerting → error

@@ -16,10 +16,17 @@ var apiFS embed.FS
 // GET /docs/openapi.yaml → OpenAPI spec with host resolved from externalURL,
 //
 //	X-Forwarded-* headers, or Host header.
-func docsHandler(externalURL string) http.Handler {
+//
+// appVersion replaces the embedded version in the spec at runtime (set via -ldflags at build time).
+func docsHandler(externalURL, appVersion string) http.Handler {
 	sub, _ := fs.Sub(apiFS, "api")
 	spec, _ := fs.ReadFile(sub, "openapi.yaml")
 	specStr := string(spec)
+
+	// Replace placeholder version with build-time version
+	if appVersion != "" && appVersion != "dev" {
+		specStr = strings.Replace(specStr, "version: dev", "version: "+appVersion, 1)
+	}
 
 	// Pre-parse external URL if configured.
 	var extScheme, extHost string

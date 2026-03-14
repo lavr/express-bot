@@ -114,6 +114,63 @@ bots:
 	}
 }
 
+func TestLoad_EnvOverridesClearsStaleBotName(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	content := `
+bots:
+  prod:
+    host: prod.com
+    id: prod-bot
+    secret: prod-secret
+`
+	if err := os.WriteFile(cfgPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Env overrides credentials — BotName should be cleared
+	t.Setenv("EXPRESS_BOTX_HOST", "other.com")
+	t.Setenv("EXPRESS_BOTX_BOT_ID", "other-bot")
+	t.Setenv("EXPRESS_BOTX_SECRET", "other-secret")
+
+	cfg, err := Load(Flags{ConfigPath: cfgPath})
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.BotName != "" {
+		t.Errorf("BotName = %q, want empty (credentials overridden by env)", cfg.BotName)
+	}
+	if cfg.Host != "other.com" {
+		t.Errorf("Host = %q, want %q", cfg.Host, "other.com")
+	}
+}
+
+func TestLoad_EnvPartialOverrideKeepsBotName(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	content := `
+bots:
+  prod:
+    host: prod.com
+    id: prod-bot
+    secret: prod-secret
+`
+	if err := os.WriteFile(cfgPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Env does NOT override any credential fields — BotName stays
+	t.Setenv("EXPRESS_BOTX_CACHE_TYPE", "none")
+
+	cfg, err := Load(Flags{ConfigPath: cfgPath})
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.BotName != "prod" {
+		t.Errorf("BotName = %q, want %q (no credential override)", cfg.BotName, "prod")
+	}
+}
+
 func TestLoad_MultipleBots_RequiresFlag(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.yaml")
@@ -301,7 +358,7 @@ func TestRequireChatID(t *testing.T) {
 	}
 
 	cfg.ChatID = "some-chat"
-	cfg.Chats = map[string]string{"some-chat": "uuid-123"}
+	cfg.Chats = map[string]ChatConfig{"some-chat": {ID: "uuid-123"}}
 	if err := cfg.RequireChatID(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -311,7 +368,7 @@ func TestRequireChatID(t *testing.T) {
 }
 
 func TestRequireChatID_SingleAlias(t *testing.T) {
-	cfg := &Config{Chats: map[string]string{"deploy": "uuid-456"}}
+	cfg := &Config{Chats: map[string]ChatConfig{"deploy": {ID: "uuid-456"}}}
 	if err := cfg.RequireChatID(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -500,7 +557,7 @@ func TestResolveChatID_UnknownAlias_NoAliases(t *testing.T) {
 func TestResolveChatID_UnknownAlias_WithAliases(t *testing.T) {
 	cfg := &Config{
 		ChatID: "unknown",
-		Chats:  map[string]string{"deploy": "uuid-1", "alerts": "uuid-2"},
+		Chats:  map[string]ChatConfig{"deploy": {ID: "uuid-1"}, "alerts": {ID: "uuid-2"}},
 	}
 	err := cfg.ResolveChatID()
 	if err == nil {
@@ -515,7 +572,7 @@ func TestResolveChatID_UnknownAlias_WithAliases(t *testing.T) {
 
 func TestRequireChatID_MultipleAliases_NoChatID(t *testing.T) {
 	cfg := &Config{
-		Chats: map[string]string{"a": "uuid-1", "b": "uuid-2"},
+		Chats: map[string]ChatConfig{"a": {ID: "uuid-1"}, "b": {ID: "uuid-2"}},
 	}
 	err := cfg.RequireChatID()
 	if err == nil {
@@ -536,7 +593,7 @@ func TestSaveConfig_RoundTrip(t *testing.T) {
 		Bots: map[string]BotConfig{
 			"prod": {Host: "prod.com", ID: "prod-id", Secret: "prod-s"},
 		},
-		Chats: map[string]string{"deploy": "uuid-d"},
+		Chats: map[string]ChatConfig{"deploy": {ID: "uuid-d"}},
 		Cache: CacheConfig{Type: "file", TTL: 1800},
 		Server: ServerConfig{
 			Listen:   ":9090",
@@ -791,5 +848,265 @@ func TestLoad_EnvCacheType(t *testing.T) {
 	}
 	if cfg.Cache.Type != "file" {
 		t.Errorf("Cache.Type = %q, want %q", cfg.Cache.Type, "file")
+	}
+}
+
+// --- ChatConfig YAML ---
+
+func TestChatConfig_UnmarshalYAML_ShortForm(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	content := `
+bots:
+  main:
+    host: h
+    id: b
+    secret: s
+chats:
+  deploy: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+`
+	os.WriteFile(cfgPath, []byte(content), 0644)
+	cfg, err := Load(Flags{ConfigPath: cfgPath})
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	chat := cfg.Chats["deploy"]
+	if chat.ID != "a1b2c3d4-e5f6-7890-abcd-ef1234567890" {
+		t.Errorf("chat.ID = %q", chat.ID)
+	}
+	if chat.Bot != "" {
+		t.Errorf("chat.Bot = %q, want empty", chat.Bot)
+	}
+}
+
+func TestChatConfig_UnmarshalYAML_LongForm(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	content := `
+bots:
+  deploy-bot:
+    host: h
+    id: b
+    secret: s
+chats:
+  deploy:
+    id: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+    bot: deploy-bot
+`
+	os.WriteFile(cfgPath, []byte(content), 0644)
+	cfg, err := Load(Flags{ConfigPath: cfgPath})
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	chat := cfg.Chats["deploy"]
+	if chat.ID != "a1b2c3d4-e5f6-7890-abcd-ef1234567890" {
+		t.Errorf("chat.ID = %q", chat.ID)
+	}
+	if chat.Bot != "deploy-bot" {
+		t.Errorf("chat.Bot = %q, want %q", chat.Bot, "deploy-bot")
+	}
+}
+
+func TestChatConfig_MarshalYAML_RoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+
+	cfg := &Config{
+		Bots: map[string]BotConfig{
+			"main": {Host: "h", ID: "b", Secret: "s"},
+		},
+		Chats: map[string]ChatConfig{
+			"deploy":  {ID: "uuid-deploy", Bot: "main"},
+			"general": {ID: "uuid-general"},
+		},
+		Cache: CacheConfig{Type: "file", TTL: 3600},
+	}
+	cfg.configPath = cfgPath
+
+	if err := cfg.SaveConfig(); err != nil {
+		t.Fatalf("SaveConfig() error: %v", err)
+	}
+
+	loaded, err := Load(Flags{ConfigPath: cfgPath})
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if loaded.Chats["deploy"].ID != "uuid-deploy" {
+		t.Errorf("deploy.ID = %q", loaded.Chats["deploy"].ID)
+	}
+	if loaded.Chats["deploy"].Bot != "main" {
+		t.Errorf("deploy.Bot = %q, want %q", loaded.Chats["deploy"].Bot, "main")
+	}
+	if loaded.Chats["general"].ID != "uuid-general" {
+		t.Errorf("general.ID = %q", loaded.Chats["general"].ID)
+	}
+	if loaded.Chats["general"].Bot != "" {
+		t.Errorf("general.Bot = %q, want empty", loaded.Chats["general"].Bot)
+	}
+}
+
+func TestResolveChatIDWithBot(t *testing.T) {
+	cfg := &Config{
+		ChatID: "deploy",
+		Chats: map[string]ChatConfig{
+			"deploy": {ID: "uuid-deploy", Bot: "deploy-bot"},
+		},
+	}
+	botName, err := cfg.ResolveChatIDWithBot()
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	if cfg.ChatID != "uuid-deploy" {
+		t.Errorf("ChatID = %q, want %q", cfg.ChatID, "uuid-deploy")
+	}
+	if botName != "deploy-bot" {
+		t.Errorf("botName = %q, want %q", botName, "deploy-bot")
+	}
+}
+
+func TestResolveChatIDWithBot_NoBotBinding(t *testing.T) {
+	cfg := &Config{
+		ChatID: "general",
+		Chats: map[string]ChatConfig{
+			"general": {ID: "uuid-general"},
+		},
+	}
+	botName, err := cfg.ResolveChatIDWithBot()
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	if botName != "" {
+		t.Errorf("botName = %q, want empty", botName)
+	}
+}
+
+func TestValidateChatBots_Valid(t *testing.T) {
+	cfg := &Config{
+		Bots:  map[string]BotConfig{"prod": {Host: "h"}},
+		Chats: map[string]ChatConfig{"deploy": {ID: "uuid", Bot: "prod"}},
+	}
+	if err := cfg.ValidateChatBots(true); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateChatBots_Invalid_Strict(t *testing.T) {
+	cfg := &Config{
+		Bots:  map[string]BotConfig{"prod": {Host: "h"}},
+		Chats: map[string]ChatConfig{"deploy": {ID: "uuid", Bot: "nonexistent"}},
+	}
+	err := cfg.ValidateChatBots(true)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "nonexistent") {
+		t.Errorf("error = %q, should mention nonexistent", err.Error())
+	}
+}
+
+func TestValidateChatBots_Invalid_NonStrict(t *testing.T) {
+	cfg := &Config{
+		Bots:  map[string]BotConfig{"prod": {Host: "h"}},
+		Chats: map[string]ChatConfig{"deploy": {ID: "uuid", Bot: "nonexistent"}},
+	}
+	if err := cfg.ValidateChatBots(false); err != nil {
+		t.Fatalf("unexpected error in non-strict mode: %v", err)
+	}
+	// Bot binding should be cleared
+	if cfg.Chats["deploy"].Bot != "" {
+		t.Errorf("Bot should be cleared, got %q", cfg.Chats["deploy"].Bot)
+	}
+}
+
+func TestApplyChatBot(t *testing.T) {
+	cfg := &Config{
+		Bots: map[string]BotConfig{
+			"prod": {Host: "prod.com", ID: "prod-id", Secret: "prod-s"},
+		},
+	}
+	if err := cfg.ApplyChatBot("prod"); err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	if cfg.Host != "prod.com" {
+		t.Errorf("Host = %q, want %q", cfg.Host, "prod.com")
+	}
+	if cfg.BotName != "prod" {
+		t.Errorf("BotName = %q, want %q", cfg.BotName, "prod")
+	}
+}
+
+func TestApplyChatBot_Unknown(t *testing.T) {
+	cfg := &Config{
+		Bots: map[string]BotConfig{"prod": {Host: "h"}},
+	}
+	err := cfg.ApplyChatBot("nonexistent")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestLoad_MultiBots_SingleChatWithBot_NoChatIDFlag(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	content := `
+bots:
+  deploy-bot:
+    host: h
+    id: b
+    secret: s
+  alert-bot:
+    host: h2
+    id: b2
+    secret: s2
+chats:
+  deploy:
+    id: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+    bot: deploy-bot
+`
+	os.WriteFile(cfgPath, []byte(content), 0644)
+
+	// No --chat-id, no --bot — should auto-select from single chat alias binding
+	cfg, err := Load(Flags{ConfigPath: cfgPath})
+	if err != nil {
+		t.Fatalf("Load() should succeed with single chat-bound bot: %v", err)
+	}
+	if cfg.BotName != "deploy-bot" {
+		t.Errorf("BotName = %q, want %q", cfg.BotName, "deploy-bot")
+	}
+	if cfg.Host != "h" {
+		t.Errorf("Host = %q, want %q", cfg.Host, "h")
+	}
+}
+
+func TestLoad_MultiBots_ChatIDFlagWithBot(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	content := `
+bots:
+  deploy-bot:
+    host: h
+    id: b
+    secret: s
+  alert-bot:
+    host: h2
+    id: b2
+    secret: s2
+chats:
+  deploy:
+    id: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+    bot: deploy-bot
+  alerts:
+    id: b1b2c3d4-e5f6-7890-abcd-ef1234567890
+    bot: alert-bot
+`
+	os.WriteFile(cfgPath, []byte(content), 0644)
+
+	// --chat-id=alerts → should pick alert-bot
+	cfg, err := Load(Flags{ConfigPath: cfgPath, ChatID: "alerts"})
+	if err != nil {
+		t.Fatalf("Load() should succeed with chat-bound bot: %v", err)
+	}
+	if cfg.BotName != "alert-bot" {
+		t.Errorf("BotName = %q, want %q", cfg.BotName, "alert-bot")
 	}
 }

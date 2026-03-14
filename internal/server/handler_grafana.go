@@ -72,13 +72,6 @@ func (s *Server) handleGrafana(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve bot in multi-bot mode
-	botName, errMsg := s.resolveRequestBot(r.Context(), r.URL.Query().Get("bot"))
-	if errMsg != "" {
-		writeError(w, http.StatusBadRequest, errMsg)
-		return
-	}
-
 	vlog.V1("grafana: received %s with %d alerts (receiver: %s, state: %s)", webhook.Status, len(webhook.Alerts), webhook.Receiver, webhook.State)
 	vlog.V2("grafana: groupKey=%s title=%s", webhook.GroupKey, webhook.Title)
 
@@ -107,16 +100,23 @@ func (s *Server) handleGrafana(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "chat_id is required: set default_chat_id in config, configure a single chat alias, or pass ?chat_id=")
 		return
 	}
-	chatID, err := s.chats(targetChat)
+	chatResult, err := s.chats(targetChat)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "resolving chat: "+err.Error())
+		return
+	}
+
+	// Resolve bot: explicit ?bot= > chat-bound bot > auth bot
+	botName, errMsg := s.resolveRequestBot(r.Context(), r.URL.Query().Get("bot"), chatResult.Bot)
+	if errMsg != "" {
+		writeError(w, http.StatusBadRequest, errMsg)
 		return
 	}
 
 	start := time.Now()
 	syncID, err := s.send(r.Context(), &SendPayload{
 		Bot:     botName,
-		ChatID:  chatID,
+		ChatID:  chatResult.ChatID,
 		Message: message,
 		Status:  status,
 	})

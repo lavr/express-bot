@@ -2,7 +2,7 @@ openapi: "3.1.0"
 info:
   title: express-botx API
   description: HTTP API for sending messages to eXpress corporate messenger via BotX API. Supports webhooks from Alertmanager and Grafana.
-  version: "0.16.0"
+  version: dev
   license:
     name: MIT
     url: https://github.com/lavr/express-botx/blob/main/LICENSE
@@ -49,6 +49,8 @@ paths:
         Send a text message and/or file to an eXpress chat.
         Supports JSON and multipart/form-data content types.
         At least one of `message` or `file` is required.
+
+        In multi-bot mode, `bot` is required unless the chat alias has a default bot binding in config.
       requestBody:
         required: true
         content:
@@ -165,7 +167,7 @@ paths:
             type: string
         - name: bot
           in: query
-          description: Bot name (required in multi-bot mode)
+          description: Bot name (required in multi-bot mode unless chat has a default bot binding)
           schema:
             type: string
       requestBody:
@@ -250,7 +252,7 @@ paths:
             type: string
         - name: bot
           in: query
-          description: Bot name (required in multi-bot mode)
+          description: Bot name (required in multi-bot mode unless chat has a default bot binding)
           schema:
             type: string
       requestBody:
@@ -362,7 +364,12 @@ components:
           description: Notification status (affects visual styling in eXpress)
         bot:
           type: string
-          description: Bot name (required in multi-bot mode)
+          description: |
+            Bot name for multi-bot setups. Resolution priority:
+            1. Explicit `bot` field in request
+            2. Default bot from chat alias config
+            3. Single bot (auto-selected if only one configured)
+            If none of the above resolve a bot, returns 400.
         opts:
           $ref: "#/components/schemas/OptsPayload"
         metadata:

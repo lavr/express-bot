@@ -96,6 +96,7 @@ Options:
 	if cfg.Server.Docs != nil && !*cfg.Server.Docs {
 		srvCfg.EnableDocs = false
 	}
+	srvCfg.AppVersion = Version
 
 	// Resolve API keys
 	keys, err := resolveAPIKeys(cfg.Server.APIKeys)
@@ -188,16 +189,23 @@ Options:
 			return err
 		}
 		sendFn = sender.Send
+		srvCfg.SingleBotName = cfg.BotName
+	}
+
+	// Validate chat-bot bindings
+	if err := cfg.ValidateChatBots(failFast); err != nil {
+		return err
 	}
 
 	// Build chat resolver
-	chatResolver := func(chatID string) (string, error) {
+	chatResolver := func(chatID string) (server.ChatResolveResult, error) {
 		cfgCopy := *cfg
 		cfgCopy.ChatID = chatID
-		if err := cfgCopy.ResolveChatID(); err != nil {
-			return "", err
+		botName, err := cfgCopy.ResolveChatIDWithBot()
+		if err != nil {
+			return server.ChatResolveResult{}, err
 		}
-		return cfgCopy.ChatID, nil
+		return server.ChatResolveResult{ChatID: cfgCopy.ChatID, Bot: botName}, nil
 	}
 
 	// APM

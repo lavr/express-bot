@@ -16,7 +16,7 @@ import (
 
 type Config struct {
 	Bots   map[string]BotConfig `yaml:"bots,omitempty"`
-	Chats  map[string]string    `yaml:"chats,omitempty"`
+	Chats  map[string]ChatConfig `yaml:"chats,omitempty"`
 	Cache  CacheConfig          `yaml:"cache"`
 	Server ServerConfig         `yaml:"server,omitempty"`
 
@@ -71,6 +71,32 @@ type BotConfig struct {
 	ID      string `yaml:"id"`
 	Secret  string `yaml:"secret"`
 	Timeout int    `yaml:"timeout,omitempty"` // HTTP timeout in seconds (default: 10)
+}
+
+// ChatConfig represents a chat alias with an optional default bot.
+// Supports both short form (just UUID string) and long form ({id, bot}) in YAML.
+type ChatConfig struct {
+	ID  string `yaml:"id"`
+	Bot string `yaml:"bot,omitempty"`
+}
+
+// UnmarshalYAML supports both string ("UUID") and object ({id: "UUID", bot: "name"}) forms.
+func (c *ChatConfig) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.ScalarNode {
+		c.ID = value.Value
+		return nil
+	}
+	type plain ChatConfig
+	return value.Decode((*plain)(c))
+}
+
+// MarshalYAML preserves short form for chats without a bot binding.
+func (c ChatConfig) MarshalYAML() (any, error) {
+	if c.Bot == "" {
+		return c.ID, nil
+	}
+	type plain ChatConfig
+	return (plain)(c), nil
 }
 
 type CacheConfig struct {
@@ -135,14 +161,23 @@ func Load(flags Flags) (*Config, error) {
 	// Layer 4: CLI flags (highest priority)
 	applyFlags(cfg, flags)
 
+	// If env/flags replaced credentials, the resolved bot name is stale
+	cfg.clearStaleBotName()
+
 	vlog.V2("config: host=%s bot_id=%s cache=%s", cfg.Host, cfg.BotID, cfg.Cache.Type)
 
-	// Multiple bots, no --bot: error only if env/flags didn't provide full credentials
+	// Multiple bots, no --bot: try chat-bound bot, then env/flags, then error
 	if flags.Bot == "" && len(cfg.Bots) > 1 && cfg.BotName == "" {
-		if cfg.Host == "" || cfg.BotID == "" || cfg.BotSecret == "" {
+		if cfg.Host != "" && cfg.BotID != "" && cfg.BotSecret != "" {
+			vlog.V1("config: using bot from env/flags (%s)", cfg.Host)
+		} else if chatBot := cfg.resolveChatBotFromFlags(flags.ChatID); chatBot != "" {
+			if err := cfg.ApplyChatBot(chatBot); err != nil {
+				return nil, err
+			}
+			vlog.V1("config: using bot %q from chat binding", chatBot)
+		} else {
 			return nil, fmt.Errorf("multiple bots configured, specify one with --bot: %s", cfg.botNames())
 		}
-		vlog.V1("config: using bot from env/flags (%s)", cfg.Host)
 	}
 
 	// Validate required fields
@@ -201,6 +236,9 @@ func LoadForServe(flags Flags) (*Config, error) {
 
 	// Layer 4: CLI flags
 	applyFlags(cfg, flags)
+
+	// If env/flags replaced credentials, the resolved bot name is stale
+	cfg.clearStaleBotName()
 
 	// Determine multi-bot mode AFTER all overrides are applied.
 	// If --bot was not specified, there are multiple bots in config,
@@ -303,12 +341,18 @@ var uuidRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[
 // ResolveChatID resolves ChatID: if it looks like a UUID, use as-is;
 // otherwise look it up in the Chats alias map.
 func (c *Config) ResolveChatID() error {
+	_, err := c.ResolveChatIDWithBot()
+	return err
+}
+
+// ResolveChatIDWithBot resolves ChatID and returns the bound bot name (if any).
+func (c *Config) ResolveChatIDWithBot() (botName string, err error) {
 	if c.ChatID == "" || uuidRe.MatchString(c.ChatID) {
-		return nil
+		return "", nil
 	}
-	if uuid, ok := c.Chats[c.ChatID]; ok {
-		c.ChatID = uuid
-		return nil
+	if chat, ok := c.Chats[c.ChatID]; ok {
+		c.ChatID = chat.ID
+		return chat.Bot, nil
 	}
 	names := make([]string, 0, len(c.Chats))
 	for k := range c.Chats {
@@ -316,36 +360,106 @@ func (c *Config) ResolveChatID() error {
 	}
 	sort.Strings(names)
 	if len(names) == 0 {
-		return fmt.Errorf("unknown chat %q (no aliases configured)", c.ChatID)
+		return "", fmt.Errorf("unknown chat %q (no aliases configured)", c.ChatID)
 	}
-	return fmt.Errorf("unknown chat alias %q, available: %s", c.ChatID, strings.Join(names, ", "))
+	return "", fmt.Errorf("unknown chat alias %q, available: %s", c.ChatID, strings.Join(names, ", "))
 }
 
 // RequireChatID resolves aliases and returns an error if ChatID is empty.
 // If ChatID is not set and there is exactly one alias, it is used automatically.
 func (c *Config) RequireChatID() error {
-	if err := c.ResolveChatID(); err != nil {
-		return err
+	_, err := c.RequireChatIDWithBot()
+	return err
+}
+
+// RequireChatIDWithBot resolves aliases, requires ChatID, and returns the bound bot name.
+func (c *Config) RequireChatIDWithBot() (botName string, err error) {
+	botName, err = c.ResolveChatIDWithBot()
+	if err != nil {
+		return "", err
 	}
 	if c.ChatID != "" {
-		return nil
+		return botName, nil
 	}
 	switch len(c.Chats) {
 	case 0:
-		return fmt.Errorf("chat is required: use --chat-id or configure aliases in config (chats section)")
+		return "", fmt.Errorf("chat is required: use --chat-id or configure aliases in config (chats section)")
 	case 1:
-		for _, uuid := range c.Chats {
-			c.ChatID = uuid
+		for _, chat := range c.Chats {
+			c.ChatID = chat.ID
+			return chat.Bot, nil
 		}
-		return nil
 	default:
 		names := make([]string, 0, len(c.Chats))
 		for k := range c.Chats {
 			names = append(names, k)
 		}
 		sort.Strings(names)
-		return fmt.Errorf("multiple chats configured, specify one with --chat-id: %s", strings.Join(names, ", "))
+		return "", fmt.Errorf("multiple chats configured, specify one with --chat-id: %s", strings.Join(names, ", "))
 	}
+	return "", nil // unreachable
+}
+
+// ResolveChatBot returns the bot name bound to a chat alias. Empty if not bound.
+func (c *Config) ResolveChatBot(chatAlias string) string {
+	if chat, ok := c.Chats[chatAlias]; ok {
+		return chat.Bot
+	}
+	return ""
+}
+
+// ValidateChatBots checks that all bot references in chats point to existing bots.
+// If strict is true (CLI send, serve --fail-fast), returns an error.
+// If strict is false (serve without --fail-fast), logs a warning and clears invalid bindings.
+func (c *Config) ValidateChatBots(strict bool) error {
+	for name, chat := range c.Chats {
+		if chat.Bot == "" {
+			continue
+		}
+		if _, ok := c.Bots[chat.Bot]; !ok {
+			if strict {
+				return fmt.Errorf("chat %q references unknown bot %q, available: %s", name, chat.Bot, c.botNames())
+			}
+			vlog.V1("config: chat %q references unknown bot %q, ignoring bot binding", name, chat.Bot)
+			chat.Bot = ""
+			c.Chats[name] = chat
+		}
+	}
+	return nil
+}
+
+// resolveChatBotFromFlags looks up the chat-bound bot from a ChatID flag value
+// without mutating config state. If chatID is empty and there is exactly one
+// chat alias with a bot binding, returns that bot (mirrors RequireChatID auto-select).
+func (c *Config) resolveChatBotFromFlags(chatID string) string {
+	if chatID != "" {
+		if chat, ok := c.Chats[chatID]; ok {
+			return chat.Bot
+		}
+		return ""
+	}
+	// No explicit chat — if exactly one alias has a bot, use it
+	if len(c.Chats) == 1 {
+		for _, chat := range c.Chats {
+			return chat.Bot
+		}
+	}
+	return ""
+}
+
+// ApplyChatBot sets the resolved bot from a chat binding.
+// Used when --bot is not specified but the chat has a default bot.
+func (c *Config) ApplyChatBot(botName string) error {
+	bot, ok := c.Bots[botName]
+	if !ok {
+		return fmt.Errorf("unknown bot %q, available: %s", botName, c.botNames())
+	}
+	c.Host = bot.Host
+	c.BotID = bot.ID
+	c.BotSecret = bot.Secret
+	c.BotName = botName
+	c.BotTimeout = bot.Timeout
+	return nil
 }
 
 // ConfigPath returns the resolved config file path.
@@ -461,6 +575,23 @@ func findConfigFile() string {
 	}
 
 	return ""
+}
+
+// clearStaleBotName resets BotName if env/flags overrode the credentials
+// so they no longer match the named config bot. This prevents the server
+// from trusting a stale name for chat-bot binding validation.
+func (c *Config) clearStaleBotName() {
+	if c.BotName == "" {
+		return
+	}
+	bot, ok := c.Bots[c.BotName]
+	if !ok {
+		return
+	}
+	if c.Host != bot.Host || c.BotID != bot.ID || c.BotSecret != bot.Secret {
+		vlog.V1("config: credentials overridden, clearing bot name %q", c.BotName)
+		c.BotName = ""
+	}
 }
 
 func applyEnv(cfg *Config) {

@@ -26,8 +26,10 @@ type Config struct {
 	AllowBotSecretAuth bool
 	BotSignatures      map[string]string // signature -> bot name (multi-bot) or "" (single-bot)
 	BotNames           []string          // available bot names; if len > 1, bot is required in requests
+	SingleBotName      string            // name of the single bot (when not multi-bot); used to reject mismatched chat bindings
 	EnableDocs         bool              // serve /docs (Swagger UI) and /docs/openapi.yaml
 	ExternalURL        string            // public URL for OpenAPI docs server variable
+	AppVersion         string            // application version (from -ldflags), replaces version in OpenAPI spec
 }
 
 // Server is the HTTP server for express-botx.
@@ -47,8 +49,14 @@ type Server struct {
 // SendFunc sends a message via the BotX API. The server calls this for each request.
 type SendFunc func(ctx context.Context, req *SendPayload) (syncID string, err error)
 
-// ChatResolver resolves a chat alias to a UUID. Returns the input unchanged if it is already a UUID.
-type ChatResolver func(chatID string) (string, error)
+// ChatResolveResult holds the resolved chat UUID and optional bound bot name.
+type ChatResolveResult struct {
+	ChatID string
+	Bot    string // from chat config, may be empty
+}
+
+// ChatResolver resolves a chat alias to a UUID and optional bound bot.
+type ChatResolver func(chatID string) (ChatResolveResult, error)
 
 // Option configures optional server features.
 type Option func(*Server)
@@ -118,7 +126,7 @@ func New(cfg Config, sendFn SendFunc, chatResolver ChatResolver, opts ...Option)
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 
 	if cfg.EnableDocs {
-		mux.Handle("/docs/", http.StripPrefix("/docs", docsHandler(cfg.ExternalURL)))
+		mux.Handle("/docs/", http.StripPrefix("/docs", docsHandler(cfg.ExternalURL, cfg.AppVersion)))
 		mux.HandleFunc("GET /docs", func(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, "/docs/", http.StatusMovedPermanently)
 		})
@@ -170,21 +178,46 @@ func (s *Server) isMultiBot() bool {
 }
 
 // resolveRequestBot validates the bot name in multi-bot mode.
-// In bot-secret auth, the request is bound to the authenticated bot.
+// Priority: explicit request bot > chat-bound bot > auth-bound bot > single bot > error.
 // Returns the resolved bot name and an error message (empty on success).
-func (s *Server) resolveRequestBot(ctx context.Context, bot string) (string, string) {
+func (s *Server) resolveRequestBot(ctx context.Context, requestBot, chatBot string) (string, string) {
 	if !s.isMultiBot() {
-		return bot, ""
+		// Single-bot mode: only one sender exists.
+		// If a specific bot was requested or bound to the chat, validate it.
+		wanted := requestBot
+		if wanted == "" {
+			wanted = chatBot
+		}
+		if wanted != "" {
+			if s.cfg.SingleBotName == "" {
+				// Server started via env/flags without a named bot —
+				// cannot serve named bot requests.
+				return "", fmt.Sprintf("bot %q is not available (server started without named bot config)", wanted)
+			}
+			if wanted != s.cfg.SingleBotName {
+				return "", fmt.Sprintf("bot %q is not available, server is running as %q", wanted, s.cfg.SingleBotName)
+			}
+		}
+		return "", ""
 	}
 
 	// If authenticated via bot-secret, bind to that bot
 	if authBot := AuthBot(ctx); authBot != "" {
+		bot := requestBot
+		if bot == "" {
+			bot = chatBot
+		}
 		if bot != "" && bot != authBot {
 			return "", fmt.Sprintf("bot %q does not match authenticated bot %q", bot, authBot)
 		}
 		return authBot, ""
 	}
 
+	// Explicit request bot takes priority
+	bot := requestBot
+	if bot == "" {
+		bot = chatBot
+	}
 	if bot == "" {
 		return "", fmt.Sprintf("bot is required, available: %s", strings.Join(s.cfg.BotNames, ", "))
 	}

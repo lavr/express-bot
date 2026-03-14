@@ -66,14 +66,6 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve bot in multi-bot mode
-	resolvedBot, errMsg := s.resolveRequestBot(r.Context(), payload.Bot)
-	if errMsg != "" {
-		writeError(w, http.StatusBadRequest, errMsg)
-		return
-	}
-	payload.Bot = resolvedBot
-
 	if payload.ChatID == "" {
 		writeError(w, http.StatusBadRequest, "chat_id is required")
 		return
@@ -90,13 +82,21 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve chat alias
-	chatID, err := s.chats(payload.ChatID)
+	// Resolve chat alias (before bot — chat may have a bound bot)
+	chatResult, err := s.chats(payload.ChatID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	payload.ChatID = chatID
+	payload.ChatID = chatResult.ChatID
+
+	// Resolve bot: explicit request bot > chat-bound bot > auth bot
+	resolvedBot, errMsg := s.resolveRequestBot(r.Context(), payload.Bot, chatResult.Bot)
+	if errMsg != "" {
+		writeError(w, http.StatusBadRequest, errMsg)
+		return
+	}
+	payload.Bot = resolvedBot
 
 	start := time.Now()
 	syncID, err := s.send(r.Context(), &payload)
