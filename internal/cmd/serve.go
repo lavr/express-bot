@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -136,7 +138,12 @@ Options:
 	}
 
 	if len(keys) == 0 && !srvCfg.AllowBotSecretAuth {
-		return fmt.Errorf("no API keys configured: use --api-key, EXPRESS_BOTX_SERVER_API_KEY, server.api_keys, or server.allow_bot_secret_auth in config")
+		key, err := generateAPIKey()
+		if err != nil {
+			return fmt.Errorf("generating api key: %w", err)
+		}
+		keys = append(keys, server.ResolvedKey{Name: "auto", Key: key})
+		vlog.Info("serve: no API keys configured, generated key: %s", key)
 	}
 	srvCfg.Keys = keys
 
@@ -401,6 +408,14 @@ func (bs *botSender) Send(ctx context.Context, p *server.SendPayload) (string, e
 		return "", err
 	}
 	return syncID, nil
+}
+
+func generateAPIKey() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }
 
 // sendResponseJSON is used for encoding sync_id from the BotX API response.
