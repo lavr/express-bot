@@ -37,9 +37,17 @@ func (c *FileCache) Set(_ context.Context, key string, token string, ttl time.Du
 	if data == nil {
 		data = make(fileCacheData)
 	}
+	// Remove expired entries
+	now := time.Now()
+	for k, v := range data {
+		if now.After(v.Expires) {
+			delete(data, k)
+		}
+	}
+
 	data[key] = fileCacheEntry{
 		Token:   token,
-		Expires: time.Now().Add(ttl),
+		Expires: now.Add(ttl),
 	}
 
 	if err := os.MkdirAll(filepath.Dir(c.Path), 0700); err != nil {
