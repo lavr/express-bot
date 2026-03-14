@@ -79,6 +79,12 @@ Options:
 		srvCfg.BasePath = "/api/v1"
 	}
 
+	// Docs: enabled by default
+	srvCfg.EnableDocs = true
+	if cfg.Server.Docs != nil && !*cfg.Server.Docs {
+		srvCfg.EnableDocs = false
+	}
+
 	// Resolve API keys
 	keys, err := resolveAPIKeys(cfg.Server.APIKeys)
 	if err != nil {

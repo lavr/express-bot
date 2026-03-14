@@ -1272,3 +1272,46 @@ func TestGrafana_StatusSentToUpstream(t *testing.T) {
 		t.Errorf("expected status=ok, got %q", lastStatus)
 	}
 }
+
+// --- docs ---
+
+func TestDocs_Enabled(t *testing.T) {
+	srv := newTestServer([]ResolvedKey{{Name: "t", Key: "k"}}, func(c *Config) {
+		c.EnableDocs = true
+	})
+
+	// /docs redirects to /docs/
+	w := doRequest(srv, "GET", "/docs", nil, nil)
+	if w.Code != 301 {
+		t.Fatalf("expected 301, got %d", w.Code)
+	}
+
+	// /docs/ serves Swagger UI HTML
+	w = doRequest(srv, "GET", "/docs/", nil, nil)
+	if w.Code != 200 {
+		t.Fatalf("expected 200 for /docs/, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "swagger-ui") {
+		t.Error("/docs/ should contain swagger-ui")
+	}
+
+	// /docs/openapi.yaml serves the spec
+	w = doRequest(srv, "GET", "/docs/openapi.yaml", nil, nil)
+	if w.Code != 200 {
+		t.Fatalf("expected 200 for openapi.yaml, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "openapi:") {
+		t.Error("openapi.yaml should contain openapi: field")
+	}
+}
+
+func TestDocs_Disabled(t *testing.T) {
+	srv := newTestServer([]ResolvedKey{{Name: "t", Key: "k"}}, func(c *Config) {
+		c.EnableDocs = false
+	})
+
+	w := doRequest(srv, "GET", "/docs/", nil, nil)
+	if w.Code == 200 {
+		t.Fatalf("expected non-200 when docs disabled, got 200")
+	}
+}

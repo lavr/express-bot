@@ -1,0 +1,569 @@
+openapi: "3.1.0"
+info:
+  title: express-botx API
+  description: HTTP API for sending messages to eXpress corporate messenger via BotX API. Supports webhooks from Alertmanager and Grafana.
+  version: "0.11.0"
+  license:
+    name: MIT
+    url: https://github.com/lavr/express-botx/blob/main/LICENSE
+
+servers:
+  - url: "{scheme}://{host}{basePath}"
+    variables:
+      scheme:
+        default: http
+        enum: [http, https]
+      host:
+        default: localhost:8080
+      basePath:
+        default: /api/v1
+
+security:
+  - bearerAuth: []
+  - apiKeyHeader: []
+
+paths:
+  /healthz:
+    get:
+      operationId: healthz
+      summary: Health check
+      description: Returns server health status. No authentication required.
+      security: []
+      responses:
+        "200":
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+
+  /send:
+    post:
+      operationId: send
+      summary: Send a message
+      description: |
+        Send a text message and/or file to an eXpress chat.
+        Supports JSON and multipart/form-data content types.
+        At least one of `message` or `file` is required.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SendRequest"
+            examples:
+              text:
+                summary: Text message
+                value:
+                  chat_id: "1a2b3c4d-5e6f-7890-abcd-ef1234567890"
+                  message: "Deploy completed successfully"
+              error:
+                summary: Error notification
+                value:
+                  chat_id: ops-alerts
+                  message: "Build #42 failed"
+                  status: error
+              file:
+                summary: Message with file
+                value:
+                  chat_id: "1a2b3c4d-5e6f-7890-abcd-ef1234567890"
+                  message: "See attached report"
+                  file:
+                    name: report.txt
+                    data: SGVsbG8gV29ybGQ=
+          multipart/form-data:
+            schema:
+              type: object
+              required: [chat_id]
+              properties:
+                chat_id:
+                  type: string
+                message:
+                  type: string
+                file:
+                  type: string
+                  format: binary
+                status:
+                  type: string
+                  enum: [ok, error]
+                bot:
+                  type: string
+                opts:
+                  type: string
+                  description: JSON string with delivery options
+                metadata:
+                  type: string
+                  description: Arbitrary JSON string
+      responses:
+        "200":
+          description: Message sent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                missing_chat:
+                  value:
+                    ok: false
+                    error: "chat_id is required"
+                missing_body:
+                  value:
+                    ok: false
+                    error: "message or file required"
+        "401":
+          description: No credentials provided
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "415":
+          description: Unsupported content type
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Upstream error (eXpress API)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /alertmanager:
+    post:
+      operationId: alertmanager
+      summary: Alertmanager webhook
+      description: |
+        Receives webhook notifications from Prometheus Alertmanager.
+        Renders alerts through a Go template and sends the result to eXpress.
+
+        Chat resolution priority:
+        1. `?chat_id=` query parameter
+        2. `default_chat_id` from config
+        3. Single chat alias from config
+      parameters:
+        - name: chat_id
+          in: query
+          description: Target chat UUID or alias (overrides config default)
+          schema:
+            type: string
+        - name: bot
+          in: query
+          description: Bot name (required in multi-bot mode)
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AlertmanagerWebhook"
+            example:
+              version: "4"
+              groupKey: '{}:{alertname="HighCPU"}'
+              status: firing
+              receiver: express
+              groupLabels:
+                alertname: HighCPU
+              commonLabels:
+                alertname: HighCPU
+                env: prod
+              commonAnnotations:
+                summary: CPU is too high
+              externalURL: http://alertmanager:9093
+              alerts:
+                - status: firing
+                  labels:
+                    alertname: HighCPU
+                    severity: critical
+                    instance: web-01:9090
+                  annotations:
+                    summary: "CPU > 90% on web-01"
+                  startsAt: "2026-03-13T20:00:00.000Z"
+                  endsAt: "0001-01-01T00:00:00Z"
+                  generatorURL: http://prometheus:9090/graph
+      responses:
+        "200":
+          description: Alert processed and sent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: No credentials provided
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Upstream error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /grafana:
+    post:
+      operationId: grafana
+      summary: Grafana webhook
+      description: |
+        Receives webhook notifications from Grafana Alerting.
+        Renders alerts through a Go template and sends the result to eXpress.
+
+        Chat resolution priority:
+        1. `?chat_id=` query parameter
+        2. `default_chat_id` from config
+        3. Single chat alias from config
+      parameters:
+        - name: chat_id
+          in: query
+          description: Target chat UUID or alias (overrides config default)
+          schema:
+            type: string
+        - name: bot
+          in: query
+          description: Bot name (required in multi-bot mode)
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GrafanaWebhook"
+            example:
+              receiver: express
+              status: firing
+              orgId: 1
+              alerts:
+                - status: firing
+                  labels:
+                    alertname: HighCPU
+                    grafana_folder: Production
+                  annotations:
+                    summary: "CPU > 90% on web-01"
+                  startsAt: "2026-03-13T20:00:00.000Z"
+                  endsAt: "0001-01-01T00:00:00Z"
+                  fingerprint: abc123def456
+                  dashboardURL: http://grafana:3000/d/dashboard-uid
+                  panelURL: http://grafana:3000/d/dashboard-uid?viewPanel=1
+                  silenceURL: http://grafana:3000/alerting/silence/new
+                  values:
+                    B: 95.2
+              groupLabels:
+                alertname: HighCPU
+              commonLabels:
+                alertname: HighCPU
+              commonAnnotations:
+                summary: "CPU > 90% on web-01"
+              externalURL: http://grafana:3000
+              version: "1"
+              groupKey: '{}:{alertname="HighCPU"}'
+              truncatedAlerts: 0
+              title: "[FIRING:1] HighCPU (Production)"
+              state: alerting
+              message: "**Firing**\n\nValue: B=95.2"
+      responses:
+        "200":
+          description: Alert processed and sent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: No credentials provided
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Upstream error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: "Authorization: Bearer <api-key>"
+    apiKeyHeader:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: "X-API-Key: <api-key>"
+    botSignature:
+      type: apiKey
+      in: header
+      name: X-Bot-Signature
+      description: HMAC-SHA256 signature for bot secret auth
+
+  schemas:
+    SendRequest:
+      type: object
+      required: [chat_id]
+      properties:
+        chat_id:
+          type: string
+          description: Target chat UUID or alias
+          example: "1a2b3c4d-5e6f-7890-abcd-ef1234567890"
+        message:
+          type: string
+          description: Message text
+          example: "Deploy completed"
+        file:
+          $ref: "#/components/schemas/FilePayload"
+        status:
+          type: string
+          enum: [ok, error]
+          default: ok
+          description: Notification status (affects visual styling in eXpress)
+        bot:
+          type: string
+          description: Bot name (required in multi-bot mode)
+        opts:
+          $ref: "#/components/schemas/OptsPayload"
+        metadata:
+          type: object
+          description: Arbitrary JSON passed to notification.metadata
+
+    FilePayload:
+      type: object
+      required: [name, data]
+      properties:
+        name:
+          type: string
+          description: File name
+          example: report.txt
+        data:
+          type: string
+          format: byte
+          description: Base64-encoded file content
+          example: SGVsbG8gV29ybGQ=
+
+    OptsPayload:
+      type: object
+      properties:
+        silent:
+          type: boolean
+          default: false
+          description: No push notification to recipient
+        stealth:
+          type: boolean
+          default: false
+          description: Message visible only to bot
+        force_dnd:
+          type: boolean
+          default: false
+          description: Deliver even if recipient has DND enabled
+        no_notify:
+          type: boolean
+          default: false
+          description: Do not send notification at all
+
+    AlertmanagerWebhook:
+      type: object
+      required: [status, alerts]
+      properties:
+        version:
+          type: string
+          example: "4"
+        groupKey:
+          type: string
+        status:
+          type: string
+          enum: [firing, resolved]
+        receiver:
+          type: string
+        groupLabels:
+          type: object
+          additionalProperties:
+            type: string
+        commonLabels:
+          type: object
+          additionalProperties:
+            type: string
+        commonAnnotations:
+          type: object
+          additionalProperties:
+            type: string
+        externalURL:
+          type: string
+          format: uri
+        alerts:
+          type: array
+          items:
+            $ref: "#/components/schemas/AlertItem"
+
+    AlertItem:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [firing, resolved]
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        annotations:
+          type: object
+          additionalProperties:
+            type: string
+        startsAt:
+          type: string
+          format: date-time
+        endsAt:
+          type: string
+          format: date-time
+        generatorURL:
+          type: string
+          format: uri
+
+    GrafanaWebhook:
+      type: object
+      required: [status, alerts]
+      properties:
+        receiver:
+          type: string
+        status:
+          type: string
+          enum: [firing, resolved]
+        orgId:
+          type: integer
+        alerts:
+          type: array
+          items:
+            $ref: "#/components/schemas/GrafanaAlertItem"
+        groupLabels:
+          type: object
+          additionalProperties:
+            type: string
+        commonLabels:
+          type: object
+          additionalProperties:
+            type: string
+        commonAnnotations:
+          type: object
+          additionalProperties:
+            type: string
+        externalURL:
+          type: string
+          format: uri
+        version:
+          type: string
+        groupKey:
+          type: string
+        truncatedAlerts:
+          type: integer
+        title:
+          type: string
+          description: Pre-formatted alert title from Grafana
+        state:
+          type: string
+          enum: [alerting, ok, no_data, pending]
+        message:
+          type: string
+          description: Pre-formatted alert message from Grafana (markdown)
+
+    GrafanaAlertItem:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [firing, resolved]
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        annotations:
+          type: object
+          additionalProperties:
+            type: string
+        startsAt:
+          type: string
+          format: date-time
+        endsAt:
+          type: string
+          format: date-time
+        generatorURL:
+          type: string
+          format: uri
+        fingerprint:
+          type: string
+        silenceURL:
+          type: string
+          format: uri
+        dashboardURL:
+          type: string
+          format: uri
+        panelURL:
+          type: string
+          format: uri
+        imageURL:
+          type: string
+          format: uri
+        values:
+          type: object
+          additionalProperties: true
+
+    SuccessResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          example: true
+        sync_id:
+          type: string
+          example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+
+    ErrorResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          example: false
+        error:
+          type: string
+          example: "chat_id is required"

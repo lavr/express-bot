@@ -38,6 +38,7 @@ type ServerConfig struct {
 	AllowBotSecretAuth bool                  `yaml:"allow_bot_secret_auth,omitempty"`
 	Alertmanager       *AlertmanagerYAMLConfig `yaml:"alertmanager,omitempty"`
 	Grafana            *GrafanaYAMLConfig      `yaml:"grafana,omitempty"`
+	Docs               *bool                   `yaml:"docs,omitempty"` // enable /docs endpoint (default: true)
 }
 
 // AlertmanagerYAMLConfig holds YAML settings for the alertmanager webhook endpoint.
