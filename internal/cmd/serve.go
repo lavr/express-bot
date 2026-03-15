@@ -53,6 +53,10 @@ Options:
 		return err
 	}
 
+	if flags.Secret != "" && flags.Token != "" {
+		return fmt.Errorf("--secret and --token are mutually exclusive")
+	}
+
 	cfg, err := config.LoadForServe(flags)
 	if err != nil {
 		return err
@@ -122,27 +126,30 @@ Options:
 		keys = append(keys, server.ResolvedKey{Name: "env", Key: resolved})
 	}
 
-	// Bot secret auth
+	// Bot secret auth (only for bots with secret, not token-only)
 	if cfg.Server.AllowBotSecretAuth {
 		srvCfg.BotSignatures = make(map[string]string)
 		if cfg.IsMultiBot() {
-			// Multi-bot: collect signatures from all bots, bind each to its name
 			for name, bot := range cfg.Bots {
+				if bot.Secret == "" {
+					continue // token-only bot — skip
+				}
 				secretKey, err := secret.Resolve(bot.Secret)
 				if err != nil {
 					return fmt.Errorf("resolving secret for bot %q: %w", name, err)
 				}
 				srvCfg.BotSignatures[auth.BuildSignature(bot.ID, secretKey)] = name
 			}
-		} else {
+		} else if cfg.BotSecret != "" {
 			secretKey, err := secret.Resolve(cfg.BotSecret)
 			if err != nil {
 				return fmt.Errorf("resolving bot secret for auth: %w", err)
 			}
-			// Single-bot: empty bot name — no binding needed
 			srvCfg.BotSignatures[auth.BuildSignature(cfg.BotID, secretKey)] = ""
 		}
-		srvCfg.AllowBotSecretAuth = true
+		if len(srvCfg.BotSignatures) > 0 {
+			srvCfg.AllowBotSecretAuth = true
+		}
 	}
 
 	if len(keys) == 0 && !srvCfg.AllowBotSecretAuth {
@@ -170,6 +177,7 @@ Options:
 			botCfg.Host = bot.Host
 			botCfg.BotID = bot.ID
 			botCfg.BotSecret = bot.Secret
+			botCfg.BotToken = bot.Token
 			botCfg.BotName = name
 			sender, err := newBotSender(&botCfg, failFast)
 			if err != nil {
@@ -419,6 +427,9 @@ func (bs *botSender) Send(ctx context.Context, p *server.SendPayload) (string, e
 	syncID, err := bs.client.SendWithSyncID(ctx, sr)
 	if err != nil {
 		if errors.Is(err, botapi.ErrUnauthorized) {
+			if bs.cfg.BotToken != "" {
+				return "", fmt.Errorf("bot token rejected (401), re-configure token for bot %q", bs.cfg.BotName)
+			}
 			newTok, refreshErr := refreshToken(bs.cfg, bs.cache)
 			if refreshErr != nil {
 				return "", fmt.Errorf("refreshing token: %w", refreshErr)

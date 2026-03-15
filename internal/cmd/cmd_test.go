@@ -188,6 +188,7 @@ func TestBotAdd(t *testing.T) {
 		"--bot-id", "new-id",
 		"--secret", "new-secret",
 		"--name", "newbot",
+		"--save-secret",
 	}, deps)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -219,6 +220,7 @@ bots:
 		"--bot-id", "updated-id",
 		"--secret", "updated-s",
 		"--name", "existing",
+		"--save-secret",
 	}, deps)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -237,6 +239,7 @@ func TestBotAdd_AutoName(t *testing.T) {
 		"--host", "auto.com",
 		"--bot-id", "auto-id",
 		"--secret", "auto-s",
+		"--save-secret",
 	}, deps)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -261,6 +264,7 @@ bots:
 		"--host", "new.com",
 		"--bot-id", "new-id",
 		"--secret", "new-s",
+		"--save-secret",
 	}, deps)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -281,7 +285,7 @@ func TestBotAdd_MissingFlags(t *testing.T) {
 	}{
 		{"no host", []string{"--config", cfgPath, "--bot-id", "b", "--secret", "s", "--name", "bot1"}, "--host is required"},
 		{"no bot-id", []string{"--config", cfgPath, "--host", "h", "--secret", "s", "--name", "bot1"}, "--bot-id is required"},
-		{"no secret", []string{"--config", cfgPath, "--host", "h", "--bot-id", "b", "--name", "bot1"}, "--secret is required"},
+		{"no secret", []string{"--config", cfgPath, "--host", "h", "--bot-id", "b", "--name", "bot1"}, "--secret or --token is required"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -210,7 +210,7 @@ bots:
   alert-bot:
     host: express.company.ru
     id: 99887766-5544-3322-1100-aabbccddeeff
-    secret: env:ALERT_SECRET              # из переменной окружения
+    token: vault:secret/data/express#alert_token  # статический токен (альтернатива secret)
 
 chats:
   # Короткая форма: только UUID
@@ -289,6 +289,7 @@ bots:
 | `EXPRESS_BOTX_HOST` | Хост сервера eXpress (или URL: `http://host:port`) |
 | `EXPRESS_BOTX_BOT_ID` | UUID бота |
 | `EXPRESS_BOTX_SECRET` | Секрет бота |
+| `EXPRESS_BOTX_TOKEN` | Токен бота (альтернатива секрету) |
 | `EXPRESS_BOTX_CACHE_TYPE` | Тип кэша: `none`, `file`, `vault` |
 | `EXPRESS_BOTX_CACHE_FILE_PATH` | Путь к файлу кэша токенов |
 | `EXPRESS_BOTX_CACHE_TTL` | TTL кэша в секундах |
@@ -304,22 +305,78 @@ bots:
 --bot-id      ID бота (UUID)
 --bot           имя бота из конфига
 --secret        секрет бота (литерал, env:VAR или vault:path#key)
+--token         токен бота (альтернатива --secret)
 --config        путь к файлу конфигурации
 --no-cache      отключить кэширование токена
 --format        формат вывода: text или json (по умолчанию: text)
 -v / -vv / -vvv уровень подробности логирования
 ```
 
-## Секреты
+## Аутентификация
 
-Значение `--secret` (и поле `secret` в конфиге) поддерживает три формата:
+Бот может аутентифицироваться двумя способами:
+
+### Secret (динамический токен)
+
+Приложение хранит `secret` и получает токен через BotX API при каждом запуске:
+
+```yaml
+bots:
+  mybot:
+    host: express.company.ru
+    id: 054af49e-...
+    secret: my-secret  # или env:VAR, или vault:path#key
+```
+
+```bash
+express-botx send --secret "my-secret" --host h --bot-id ID "Hello"
+```
+
+При 401 — автоматический refresh токена.
+
+### Token (статический токен)
+
+Приложение хранит готовый токен, без обращения к API:
+
+```yaml
+bots:
+  mybot:
+    host: express.company.ru
+    id: 054af49e-...
+    token: eyJhbGci...  # или env:VAR, или vault:path#key
+```
+
+```bash
+express-botx send --token "TOKEN" --host h --bot-id ID "Hello"
+```
+
+Токены eXpress бессрочные. При 401 — ошибка (refresh невозможен без secret).
+
+### `bot add` — обмен secret на token
+
+По умолчанию `bot add` обменивает secret на token через API и сохраняет **только token** (secure by default):
+
+```bash
+# Secret → token (secret не сохраняется)
+express-botx bot add mybot --host h --bot-id ID --secret SECRET
+
+# Сохранить secret как есть
+express-botx bot add mybot --host h --bot-id ID --secret SECRET --save-secret
+
+# Готовый token
+express-botx bot add mybot --host h --bot-id ID --token TOKEN
+```
+
+### Форматы значений
+
+`--secret`, `--token` и поля `secret`/`token` в конфиге поддерживают:
 
 ```bash
 # Литеральное значение
 express-botx send --secret "my-secret-key" "Hello"
 
 # Из переменной окружения
-express-botx send --secret env:EXPRESS_BOTX_SECRET "Hello"
+express-botx send --token env:MY_TOKEN "Hello"
 
 # Из HashiCorp Vault (KV v2)
 express-botx send --secret "vault:secret/data/express#bot_secret" "Hello"

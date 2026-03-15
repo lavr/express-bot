@@ -86,6 +86,7 @@ func globalFlags(fs *flag.FlagSet, flags *config.Flags) {
 	fs.StringVar(&flags.Host, "host", "", "eXpress server host")
 	fs.StringVar(&flags.BotID, "bot-id", "", "bot ID (UUID)")
 	fs.StringVar(&flags.Secret, "secret", "", "bot secret (literal, env:VAR, or vault:path#key)")
+	fs.StringVar(&flags.Token, "token", "", "bot token (alternative to --secret; literal, env:VAR, or vault:path#key)")
 	fs.BoolVar(&flags.NoCache, "no-cache", false, "disable token caching")
 	fs.StringVar(&flags.Format, "format", "", "output format: text or json (default: text)")
 	fs.IntVar(&flags.Verbose, "verbose", 0, "verbosity level (1-3, same as -v/-vv/-vvv)")
@@ -98,8 +99,18 @@ func applyVerboseFlag(flags config.Flags) {
 	}
 }
 
-// authenticate resolves the secret, gets or loads a cached token.
+// authenticate resolves credentials and returns a token.
+// In token mode, returns the static token directly without API call.
 func authenticate(cfg *config.Config) (string, token.Cache, error) {
+	if cfg.BotToken != "" {
+		vlog.V1("auth: using static token")
+		resolved, err := secret.Resolve(cfg.BotToken)
+		if err != nil {
+			return "", nil, fmt.Errorf("resolving token: %w", err)
+		}
+		return resolved, token.NoopCache{}, nil
+	}
+
 	vlog.V1("auth: resolving secret")
 	secretKey, err := secret.Resolve(cfg.BotSecret)
 	if err != nil {

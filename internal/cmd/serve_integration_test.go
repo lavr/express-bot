@@ -689,3 +689,89 @@ server:
 		t.Fatalf("expected 401 without auth, got %d", resp.StatusCode)
 	}
 }
+
+func TestServeIntegration_StaticToken(t *testing.T) {
+	mock := newMockBotxAPI()
+	botxSrv := httptest.NewServer(mock.handler())
+	defer botxSrv.Close()
+
+	port := freePort(t)
+	listenAddr := fmt.Sprintf("127.0.0.1:%d", port)
+
+	// Bot uses static token — no /token API call needed
+	cfgPath := writeTestConfig(t, fmt.Sprintf(`
+bots:
+  main:
+    host: %s
+    id: bot-001
+    token: %s
+server:
+  listen: "%s"
+  api_keys:
+    - name: test
+      key: test-key
+`, botxSrv.URL, mock.tokenVal, listenAddr))
+
+	startServe(t, []string{"--config", cfgPath, "--listen", listenAddr, "--no-cache"})
+
+	baseURL := fmt.Sprintf("http://%s/api/v1", listenAddr)
+
+	code, resp := doPost(t, baseURL+"/send", "test-key",
+		`{"chat_id":"a0000000-0000-0000-0000-000000000001","message":"via static token"}`)
+	if code != 200 {
+		t.Fatalf("expected 200, got %d: %v", code, resp)
+	}
+
+	calls := mock.getCalls()
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(calls))
+	}
+	if calls[0].Notification.Body != "via static token" {
+		t.Errorf("unexpected body: %q", calls[0].Notification.Body)
+	}
+}
+
+func TestServeIntegration_MixedSecretAndToken(t *testing.T) {
+	mock := newMockBotxAPI()
+	botxSrv := httptest.NewServer(mock.handler())
+	defer botxSrv.Close()
+
+	port := freePort(t)
+	listenAddr := fmt.Sprintf("127.0.0.1:%d", port)
+
+	// One bot with secret, another with token
+	cfgPath := writeTestConfig(t, fmt.Sprintf(`
+bots:
+  secret-bot:
+    host: %s
+    id: bot-s
+    secret: secret-s
+  token-bot:
+    host: %s
+    id: bot-t
+    token: %s
+server:
+  listen: "%s"
+  api_keys:
+    - name: test
+      key: test-key
+`, botxSrv.URL, botxSrv.URL, mock.tokenVal, listenAddr))
+
+	startServe(t, []string{"--config", cfgPath, "--listen", listenAddr, "--no-cache"})
+
+	baseURL := fmt.Sprintf("http://%s/api/v1", listenAddr)
+
+	// Send via secret-bot
+	code, resp := doPost(t, baseURL+"/send", "test-key",
+		`{"bot":"secret-bot","chat_id":"a0000000-0000-0000-0000-000000000001","message":"via secret"}`)
+	if code != 200 {
+		t.Fatalf("expected 200 via secret-bot, got %d: %v", code, resp)
+	}
+
+	// Send via token-bot
+	code, resp = doPost(t, baseURL+"/send", "test-key",
+		`{"bot":"token-bot","chat_id":"a0000000-0000-0000-0000-000000000001","message":"via token"}`)
+	if code != 200 {
+		t.Fatalf("expected 200 via token-bot, got %d: %v", code, resp)
+	}
+}

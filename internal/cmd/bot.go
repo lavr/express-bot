@@ -68,21 +68,32 @@ func runBotPing(args []string, deps Deps) error {
 
 	start := time.Now()
 
-	secretKey, err := secret.Resolve(cfg.BotSecret)
-	if err != nil {
-		if !quiet {
-			fmt.Fprintf(deps.Stdout, "FAIL auth: %v\n", err)
+	var tok string
+	if cfg.BotToken != "" {
+		tok, err = secret.Resolve(cfg.BotToken)
+		if err != nil {
+			if !quiet {
+				fmt.Fprintf(deps.Stdout, "FAIL token: %v\n", err)
+			}
+			return fmt.Errorf("ping failed: %w", err)
 		}
-		return fmt.Errorf("ping failed: %w", err)
-	}
+	} else {
+		secretKey, err := secret.Resolve(cfg.BotSecret)
+		if err != nil {
+			if !quiet {
+				fmt.Fprintf(deps.Stdout, "FAIL auth: %v\n", err)
+			}
+			return fmt.Errorf("ping failed: %w", err)
+		}
 
-	signature := auth.BuildSignature(cfg.BotID, secretKey)
-	tok, err := auth.GetToken(context.Background(), cfg.Host, cfg.BotID, signature, cfg.HTTPTimeout())
-	if err != nil {
-		if !quiet {
-			fmt.Fprintf(deps.Stdout, "FAIL auth: %v\n", err)
+		signature := auth.BuildSignature(cfg.BotID, secretKey)
+		tok, err = auth.GetToken(context.Background(), cfg.Host, cfg.BotID, signature, cfg.HTTPTimeout())
+		if err != nil {
+			if !quiet {
+				fmt.Fprintf(deps.Stdout, "FAIL auth: %v\n", err)
+			}
+			return fmt.Errorf("ping failed: %w", err)
 		}
-		return fmt.Errorf("ping failed: %w", err)
 	}
 
 	client := botapi.NewClient(cfg.Host, tok, cfg.HTTPTimeout())
@@ -215,15 +226,18 @@ func runBotAdd(args []string, deps Deps) error {
 	fs := flag.NewFlagSet("bot add", flag.ContinueOnError)
 	fs.SetOutput(deps.Stderr)
 	var flags config.Flags
-	var name, host, botID, secretVal string
+	var name, host, botID, secretVal, tokenVal string
+	var saveSecret bool
 
 	fs.StringVar(&flags.ConfigPath, "config", "", "path to config file")
 	fs.StringVar(&name, "name", "", "bot name (auto-generated as bot1, bot2, ... if omitted)")
 	fs.StringVar(&host, "host", "", "eXpress server host (required)")
 	fs.StringVar(&botID, "bot-id", "", "bot ID (required)")
-	fs.StringVar(&secretVal, "secret", "", "bot secret (required)")
+	fs.StringVar(&secretVal, "secret", "", "bot secret (exchanges for token by default)")
+	fs.StringVar(&tokenVal, "token", "", "bot token (alternative to --secret)")
+	fs.BoolVar(&saveSecret, "save-secret", false, "save secret instead of exchanging for token")
 	fs.Usage = func() {
-		fmt.Fprintf(deps.Stderr, "Usage: express-botx bot add --host HOST --bot-id UUID --secret SECRET [options]\n\nAdd or update a bot in the config file.\nIf --name is omitted, it is auto-generated as bot1, bot2, etc.\n\nOptions:\n")
+		fmt.Fprintf(deps.Stderr, "Usage: express-botx bot add --host HOST --bot-id ID (--secret SECRET | --token TOKEN) [options]\n\nAdd or update a bot in the config file.\nWith --secret: exchanges for token via API (use --save-secret to keep secret).\nWith --token: saves token as-is.\n\nOptions:\n")
 		fs.PrintDefaults()
 	}
 
@@ -240,8 +254,14 @@ func runBotAdd(args []string, deps Deps) error {
 	if botID == "" {
 		return fmt.Errorf("--bot-id is required")
 	}
-	if secretVal == "" {
-		return fmt.Errorf("--secret is required")
+	if secretVal == "" && tokenVal == "" {
+		return fmt.Errorf("--secret or --token is required")
+	}
+	if secretVal != "" && tokenVal != "" {
+		return fmt.Errorf("--secret and --token are mutually exclusive")
+	}
+	if saveSecret && secretVal == "" {
+		return fmt.Errorf("--save-secret requires --secret")
 	}
 
 	cfg, err := config.LoadMinimal(flags)
@@ -275,19 +295,41 @@ func runBotAdd(args []string, deps Deps) error {
 	if _, exists := cfg.Bots[name]; exists {
 		action = "updated"
 	}
-	cfg.Bots[name] = config.BotConfig{
-		Host:   host,
-		ID:     botID,
-		Secret: secretVal,
+
+	var botCfg config.BotConfig
+	var detail string
+	switch {
+	case tokenVal != "":
+		// --token: save as-is
+		botCfg = config.BotConfig{Host: host, ID: botID, Token: tokenVal}
+		detail = "token saved"
+	case saveSecret:
+		// --secret --save-secret: save secret
+		botCfg = config.BotConfig{Host: host, ID: botID, Secret: secretVal}
+		detail = "secret saved"
+	default:
+		// --secret (default): exchange for token
+		secretKey, err := secret.Resolve(secretVal)
+		if err != nil {
+			return fmt.Errorf("resolving secret: %w", err)
+		}
+		signature := auth.BuildSignature(botID, secretKey)
+		tok, err := auth.GetToken(context.Background(), host, botID, signature, cfg.HTTPTimeout())
+		if err != nil {
+			return fmt.Errorf("exchanging secret for token: %w", err)
+		}
+		botCfg = config.BotConfig{Host: host, ID: botID, Token: tok}
+		detail = "token obtained"
 	}
-	vlog.V2("bot: %s %s (host=%s, id=%s, secret=%s)", action, name, host, botID, vlog.Mask(secretVal))
+
+	cfg.Bots[name] = botCfg
 
 	if err := cfg.SaveConfig(); err != nil {
 		return err
 	}
 	vlog.V1("bot: config saved to %s", cfg.ConfigPath())
 
-	fmt.Fprintf(deps.Stdout, "Bot %s: %s (%s, %s)\n", action, name, host, botID)
+	fmt.Fprintf(deps.Stdout, "Bot %s: %s (%s, %s, %s)\n", action, name, host, botID, detail)
 	return nil
 }
 

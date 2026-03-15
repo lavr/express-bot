@@ -67,6 +67,10 @@ Options:
 		return err
 	}
 
+	if flags.Secret != "" && flags.Token != "" {
+		return fmt.Errorf("--secret and --token are mutually exclusive")
+	}
+
 	cfg, err := config.Load(flags)
 	if err != nil {
 		return err
@@ -171,6 +175,9 @@ Options:
 	err = client.Send(context.Background(), sr)
 	if err != nil {
 		if errors.Is(err, botapi.ErrUnauthorized) {
+			if cfg.BotToken != "" {
+				return fmt.Errorf("bot token rejected (401), re-configure token")
+			}
 			tok, err = refreshToken(cfg, cache)
 			if err != nil {
 				return fmt.Errorf("refreshing token: %w", err)

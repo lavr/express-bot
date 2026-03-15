@@ -327,7 +327,7 @@ func TestLoad_MissingRequired(t *testing.T) {
 	}{
 		{"no host", Flags{BotID: "b", Secret: "s"}, "host is required"},
 		{"no bot_id", Flags{Host: "h", Secret: "s"}, "bot id is required"},
-		{"no secret", Flags{Host: "h", BotID: "b"}, "bot secret is required"},
+		{"no secret", Flags{Host: "h", BotID: "b"}, "bot secret or token is required"},
 	}
 
 	for _, tt := range tests {
@@ -1108,5 +1108,183 @@ chats:
 	}
 	if cfg.BotName != "alert-bot" {
 		t.Errorf("BotName = %q, want %q", cfg.BotName, "alert-bot")
+	}
+}
+
+// --- Static token ---
+
+func TestLoad_TokenMode(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	content := `
+bots:
+  main:
+    host: h
+    id: b
+    token: my-static-token
+`
+	os.WriteFile(cfgPath, []byte(content), 0644)
+	cfg, err := Load(Flags{ConfigPath: cfgPath})
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.BotToken != "my-static-token" {
+		t.Errorf("BotToken = %q, want %q", cfg.BotToken, "my-static-token")
+	}
+	if cfg.BotSecret != "" {
+		t.Errorf("BotSecret = %q, want empty", cfg.BotSecret)
+	}
+}
+
+func TestLoad_TokenAndSecret_Error(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	content := `
+bots:
+  main:
+    host: h
+    id: b
+    secret: s
+    token: t
+`
+	os.WriteFile(cfgPath, []byte(content), 0644)
+	_, err := Load(Flags{ConfigPath: cfgPath})
+	if err == nil {
+		t.Fatal("expected error for bot with both secret and token")
+	}
+	if !strings.Contains(err.Error(), "both secret and token") {
+		t.Errorf("error = %q, should mention both secret and token", err.Error())
+	}
+}
+
+func TestLoad_CLITokenOverridesConfigSecret(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	content := `
+bots:
+  main:
+    host: h
+    id: b
+    secret: config-secret
+`
+	os.WriteFile(cfgPath, []byte(content), 0644)
+	cfg, err := Load(Flags{ConfigPath: cfgPath, Token: "cli-token"})
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.BotToken != "cli-token" {
+		t.Errorf("BotToken = %q, want %q", cfg.BotToken, "cli-token")
+	}
+	if cfg.BotSecret != "" {
+		t.Errorf("BotSecret should be empty (overridden by CLI token), got %q", cfg.BotSecret)
+	}
+}
+
+func TestLoad_EnvTokenOverridesConfigSecret(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	content := `
+bots:
+  main:
+    host: h
+    id: b
+    secret: config-secret
+`
+	os.WriteFile(cfgPath, []byte(content), 0644)
+	t.Setenv("EXPRESS_BOTX_TOKEN", "env-token")
+
+	cfg, err := Load(Flags{ConfigPath: cfgPath})
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.BotToken != "env-token" {
+		t.Errorf("BotToken = %q, want %q", cfg.BotToken, "env-token")
+	}
+	if cfg.BotSecret != "" {
+		t.Errorf("BotSecret should be empty, got %q", cfg.BotSecret)
+	}
+}
+
+func TestLoad_EnvSecretAndTokenConflict(t *testing.T) {
+	t.Setenv("EXPRESS_BOTX_SECRET", "s")
+	t.Setenv("EXPRESS_BOTX_TOKEN", "t")
+
+	_, err := Load(Flags{Host: "h", BotID: "b"})
+	if err == nil {
+		t.Fatal("expected error for env secret+token conflict")
+	}
+	if !strings.Contains(err.Error(), "EXPRESS_BOTX_SECRET and EXPRESS_BOTX_TOKEN") {
+		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestLoad_MultiBotWithToken(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	content := `
+bots:
+  secret-bot:
+    host: h
+    id: b1
+    secret: s
+  token-bot:
+    host: h
+    id: b2
+    token: t
+`
+	os.WriteFile(cfgPath, []byte(content), 0644)
+
+	// --bot=token-bot should work
+	cfg, err := Load(Flags{ConfigPath: cfgPath, Bot: "token-bot"})
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.BotToken != "t" {
+		t.Errorf("BotToken = %q, want %q", cfg.BotToken, "t")
+	}
+	if cfg.BotSecret != "" {
+		t.Errorf("BotSecret = %q, want empty", cfg.BotSecret)
+	}
+}
+
+func TestLoad_TokenViaFlags_MultiBot(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	content := `
+bots:
+  a:
+    host: h1
+    id: b1
+    secret: s1
+  b:
+    host: h2
+    id: b2
+    secret: s2
+`
+	os.WriteFile(cfgPath, []byte(content), 0644)
+
+	// --host + --bot-id + --token should collapse to single-bot, not error
+	cfg, err := Load(Flags{ConfigPath: cfgPath, Host: "h3", BotID: "b3", Token: "tok"})
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.BotToken != "tok" {
+		t.Errorf("BotToken = %q, want %q", cfg.BotToken, "tok")
+	}
+}
+
+func TestValidateBotConfigs_MultiBotOneWithTokenAndSecret(t *testing.T) {
+	cfg := &Config{
+		Bots: map[string]BotConfig{
+			"good": {Host: "h", ID: "b", Token: "t"},
+			"bad":  {Host: "h", ID: "b", Secret: "s", Token: "t"},
+		},
+	}
+	err := cfg.validateBotConfigs()
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "bad") {
+		t.Errorf("error should mention bad bot, got: %v", err)
 	}
 }

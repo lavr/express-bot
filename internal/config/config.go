@@ -24,6 +24,7 @@ type Config struct {
 	Host       string `yaml:"-"`
 	BotID      string `yaml:"-"`
 	BotSecret  string `yaml:"-"`
+	BotToken   string `yaml:"-"` // static token (alternative to secret)
 	BotName    string `yaml:"-"`
 	BotTimeout int    `yaml:"-"` // HTTP timeout in seconds (from bot config)
 	ChatID     string `yaml:"-"`
@@ -69,7 +70,8 @@ type APIKeyConfig struct {
 type BotConfig struct {
 	Host    string `yaml:"host"`
 	ID      string `yaml:"id"`
-	Secret  string `yaml:"secret"`
+	Secret  string `yaml:"secret,omitempty"`
+	Token   string `yaml:"token,omitempty"`  // pre-obtained token (alternative to secret)
 	Timeout int    `yaml:"timeout,omitempty"` // HTTP timeout in seconds (default: 10)
 }
 
@@ -114,6 +116,7 @@ type Flags struct {
 	Host       string
 	BotID      string
 	Secret     string
+	Token      string
 	ChatID     string
 	NoCache    bool
 	Format     string
@@ -145,6 +148,11 @@ func Load(flags Flags) (*Config, error) {
 		}
 	}
 
+	// Validate: no bot has both secret and token in YAML
+	if err := cfg.validateBotConfigs(); err != nil {
+		return nil, err
+	}
+
 	// Layer 2: resolve bot from config (defer multi-bot error until after env/flags)
 	if flags.Bot != "" || len(cfg.Bots) <= 1 {
 		if err := cfg.resolveBot(flags.Bot); err != nil {
@@ -156,7 +164,9 @@ func Load(flags Flags) (*Config, error) {
 	}
 
 	// Layer 3: environment variables (override resolved bot)
-	applyEnv(cfg)
+	if err := applyEnv(cfg); err != nil {
+		return nil, err
+	}
 
 	// Layer 4: CLI flags (highest priority)
 	applyFlags(cfg, flags)
@@ -168,7 +178,7 @@ func Load(flags Flags) (*Config, error) {
 
 	// Multiple bots, no --bot: try chat-bound bot, then env/flags, then error
 	if flags.Bot == "" && len(cfg.Bots) > 1 && cfg.BotName == "" {
-		if cfg.Host != "" && cfg.BotID != "" && cfg.BotSecret != "" {
+		if cfg.hasCredentials() {
 			vlog.V1("config: using bot from env/flags (%s)", cfg.Host)
 		} else if chatBot := cfg.resolveChatBotFromFlags(flags.ChatID); chatBot != "" {
 			if err := cfg.ApplyChatBot(chatBot); err != nil {
@@ -187,8 +197,8 @@ func Load(flags Flags) (*Config, error) {
 	if cfg.BotID == "" {
 		return nil, fmt.Errorf("bot id is required (--bot-id, EXPRESS_BOTX_BOT_ID, or config file)")
 	}
-	if cfg.BotSecret == "" {
-		return nil, fmt.Errorf("bot secret is required (--secret, EXPRESS_BOTX_SECRET, or config file)")
+	if cfg.BotSecret == "" && cfg.BotToken == "" {
+		return nil, fmt.Errorf("bot secret or token is required (--secret, --token, EXPRESS_BOTX_SECRET, EXPRESS_BOTX_TOKEN, or config file)")
 	}
 
 	return cfg, nil
@@ -221,6 +231,11 @@ func LoadForServe(flags Flags) (*Config, error) {
 		}
 	}
 
+	// Validate: no bot has both secret and token in YAML
+	if err := cfg.validateBotConfigs(); err != nil {
+		return nil, err
+	}
+
 	// Layer 2: resolve bot — only if --bot is specified or there is exactly one bot
 	if flags.Bot != "" || len(cfg.Bots) <= 1 {
 		if err := cfg.resolveBot(flags.Bot); err != nil {
@@ -232,7 +247,9 @@ func LoadForServe(flags Flags) (*Config, error) {
 	}
 
 	// Layer 3: environment variables
-	applyEnv(cfg)
+	if err := applyEnv(cfg); err != nil {
+		return nil, err
+	}
 
 	// Layer 4: CLI flags
 	applyFlags(cfg, flags)
@@ -241,9 +258,7 @@ func LoadForServe(flags Flags) (*Config, error) {
 	cfg.clearStaleBotName()
 
 	// Determine multi-bot mode AFTER all overrides are applied.
-	// If --bot was not specified, there are multiple bots in config,
-	// and env/flags did not supply host+bot_id+secret — it's multi-bot.
-	if flags.Bot == "" && len(cfg.Bots) > 1 && (cfg.Host == "" || cfg.BotID == "" || cfg.BotSecret == "") {
+	if flags.Bot == "" && len(cfg.Bots) > 1 && !cfg.hasCredentials() {
 		cfg.multiBot = true
 		vlog.V1("config: multi-bot mode (%d bots)", len(cfg.Bots))
 	}
@@ -256,8 +271,8 @@ func LoadForServe(flags Flags) (*Config, error) {
 		if cfg.BotID == "" {
 			return nil, fmt.Errorf("bot id is required (--bot-id, EXPRESS_BOTX_BOT_ID, or config file)")
 		}
-		if cfg.BotSecret == "" {
-			return nil, fmt.Errorf("bot secret is required (--secret, EXPRESS_BOTX_SECRET, or config file)")
+		if cfg.BotSecret == "" && cfg.BotToken == "" {
+			return nil, fmt.Errorf("bot secret or token is required (--secret, --token, EXPRESS_BOTX_SECRET, EXPRESS_BOTX_TOKEN, or config file)")
 		}
 	}
 
@@ -292,6 +307,7 @@ func (c *Config) resolveBot(botFlag string) error {
 		c.Host = bot.Host
 		c.BotID = bot.ID
 		c.BotSecret = bot.Secret
+		c.BotToken = bot.Token
 		c.BotName = botFlag
 		c.BotTimeout = bot.Timeout
 		return nil
@@ -305,6 +321,7 @@ func (c *Config) resolveBot(botFlag string) error {
 			c.Host = bot.Host
 			c.BotID = bot.ID
 			c.BotSecret = bot.Secret
+			c.BotToken = bot.Token
 			c.BotName = name
 			c.BotTimeout = bot.Timeout
 		}
@@ -497,6 +514,7 @@ func (c *Config) ApplyChatBot(botName string) error {
 	c.Host = bot.Host
 	c.BotID = bot.ID
 	c.BotSecret = bot.Secret
+	c.BotToken = bot.Token
 	c.BotName = botName
 	c.BotTimeout = bot.Timeout
 	return nil
@@ -617,9 +635,23 @@ func findConfigFile() string {
 	return ""
 }
 
+// validateBotConfigs checks that no bot in YAML has both secret and token.
+func (c *Config) validateBotConfigs() error {
+	for name, bot := range c.Bots {
+		if bot.Secret != "" && bot.Token != "" {
+			return fmt.Errorf("bot %q has both secret and token, use one", name)
+		}
+	}
+	return nil
+}
+
+// hasCredentials returns true if the config has enough to authenticate.
+func (c *Config) hasCredentials() bool {
+	return c.Host != "" && c.BotID != "" && (c.BotSecret != "" || c.BotToken != "")
+}
+
 // clearStaleBotName resets BotName if env/flags overrode the credentials
-// so they no longer match the named config bot. This prevents the server
-// from trusting a stale name for chat-bot binding validation.
+// so they no longer match the named config bot.
 func (c *Config) clearStaleBotName() {
 	if c.BotName == "" {
 		return
@@ -628,22 +660,42 @@ func (c *Config) clearStaleBotName() {
 	if !ok {
 		return
 	}
-	if c.Host != bot.Host || c.BotID != bot.ID || c.BotSecret != bot.Secret {
+	if c.Host != bot.Host || c.BotID != bot.ID {
+		vlog.V1("config: credentials overridden, clearing bot name %q", c.BotName)
+		c.BotName = ""
+		return
+	}
+	if bot.Secret != "" && c.BotSecret != bot.Secret {
+		vlog.V1("config: credentials overridden, clearing bot name %q", c.BotName)
+		c.BotName = ""
+	} else if bot.Token != "" && c.BotToken != bot.Token {
 		vlog.V1("config: credentials overridden, clearing bot name %q", c.BotName)
 		c.BotName = ""
 	}
 }
 
-func applyEnv(cfg *Config) {
+func applyEnv(cfg *Config) error {
 	if v := os.Getenv("EXPRESS_BOTX_HOST"); v != "" {
 		cfg.Host = v
 	}
 	if v := os.Getenv("EXPRESS_BOTX_BOT_ID"); v != "" {
 		cfg.BotID = v
 	}
-	if v := os.Getenv("EXPRESS_BOTX_SECRET"); v != "" {
-		cfg.BotSecret = v
+
+	envSecret := os.Getenv("EXPRESS_BOTX_SECRET")
+	envToken := os.Getenv("EXPRESS_BOTX_TOKEN")
+	if envSecret != "" && envToken != "" {
+		return fmt.Errorf("both EXPRESS_BOTX_SECRET and EXPRESS_BOTX_TOKEN are set, use one")
 	}
+	if envSecret != "" {
+		cfg.BotSecret = envSecret
+		cfg.BotToken = "" // env secret wins over config token
+	}
+	if envToken != "" {
+		cfg.BotToken = envToken
+		cfg.BotSecret = "" // env token wins over config secret
+	}
+
 	if v := os.Getenv("EXPRESS_BOTX_CACHE_TYPE"); v != "" {
 		cfg.Cache.Type = v
 	}
@@ -661,6 +713,7 @@ func applyEnv(cfg *Config) {
 			cfg.Cache.TTL = ttl
 		}
 	}
+	return nil
 }
 
 func applyFlags(cfg *Config, flags Flags) {
@@ -672,6 +725,11 @@ func applyFlags(cfg *Config, flags Flags) {
 	}
 	if flags.Secret != "" {
 		cfg.BotSecret = flags.Secret
+		cfg.BotToken = "" // flag secret wins over env/config token
+	}
+	if flags.Token != "" {
+		cfg.BotToken = flags.Token
+		cfg.BotSecret = "" // flag token wins over env/config secret
 	}
 	if flags.ChatID != "" {
 		cfg.ChatID = flags.ChatID
