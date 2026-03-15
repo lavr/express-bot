@@ -365,6 +365,9 @@ express-botx bot add mybot --host h --bot-id ID --secret SECRET --save-secret
 
 # Готовый token
 express-botx bot add mybot --host h --bot-id ID --token TOKEN
+
+# Получить token без сохранения (для скриптов)
+express-botx bot add mybot --host h --bot-id ID --secret SECRET --dry-run
 ```
 
 ### Форматы значений
