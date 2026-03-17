@@ -33,6 +33,9 @@ github.com/getsentry/sentry-go/internal/util
 # github.com/joeshaw/multierror v0.0.0-20140124173710-69b34d4ec901
 ## explicit
 github.com/joeshaw/multierror
+# github.com/mehanizm/iuliia-go v1.0.2
+## explicit; go 1.13
+github.com/mehanizm/iuliia-go
 # github.com/newrelic/go-agent/v3 v3.42.0
 ## explicit; go 1.24
 github.com/newrelic/go-agent/v3/internal

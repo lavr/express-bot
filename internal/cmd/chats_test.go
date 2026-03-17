@@ -1,9 +1,15 @@
 package cmd
 
 import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/lavr/express-botx/internal/botapi"
 )
 
 // --- chats add (direct UUID mode) ---
@@ -417,6 +423,7 @@ func TestSlugify(t *testing.T) {
 		{"already-slug", "already-slug"},
 		{"multiple---hyphens", "multiple-hyphens"},
 		{"123 numbers", "123-numbers"},
+		{"Веб-админы", "veb-adminy"},
 		{"", ""},
 	}
 	for _, tt := range tests {
@@ -425,4 +432,366 @@ func TestSlugify(t *testing.T) {
 			t.Errorf("slugify(%q) = %q, want %q", tt.input, got, tt.want)
 		}
 	}
+}
+
+func TestGenerateChatAlias_FallbackAndCollisions(t *testing.T) {
+	taken := map[string]struct{}{
+		"veb-adminy":    {},
+		"chat-12345678": {},
+	}
+
+	if got := generateChatAlias("Веб-админы", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "", taken); got != "veb-adminy-2" {
+		t.Fatalf("expected collision suffix, got %q", got)
+	}
+
+	if got := generateChatAlias("!!!", "12345678-bbbb-cccc-dddd-eeeeeeeeeeee", "", taken); got != "chat-12345678-2" {
+		t.Fatalf("expected fallback alias, got %q", got)
+	}
+
+	if got := generateChatAlias("АРМ ci/cd", "87654321-bbbb-cccc-dddd-eeeeeeeeeeee", "team-", map[string]struct{}{}); got != "team-arm-ci-cd" {
+		t.Fatalf("expected prefixed alias, got %q", got)
+	}
+}
+
+func TestChatsImport_DryRunDoesNotWrite(t *testing.T) {
+	chats := []botapi.ChatInfo{
+		{GroupChatID: "47694792-1263-5e54-9214-e92ed1e609be", Name: "Веб-админы", ChatType: chatTypeGroup},
+	}
+	srv := newChatsListServer(t, chats)
+	defer srv.Close()
+
+	cfgPath := writeImportConfig(t, srv.URL, "deploy-bot", "")
+	before, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	deps, stdout, _ := testDeps()
+	err = runChatsImport([]string{"--config", cfgPath, "--dry-run"}, deps)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "Imported chats: 1") {
+		t.Fatalf("unexpected output: %s", stdout.String())
+	}
+
+	after, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatalf("config changed during dry-run:\n%s", string(after))
+	}
+}
+
+func TestChatsImport_AddsMultipleChats(t *testing.T) {
+	chats := []botapi.ChatInfo{
+		{GroupChatID: "47694792-1263-5e54-9214-e92ed1e609be", Name: "Веб-админы", ChatType: chatTypeGroup},
+		{GroupChatID: "5de954e5-4853-5a18-af55-19f0b34ba360", Name: "TM Cache Alert", ChatType: chatTypeGroup},
+		{GroupChatID: "f40f109f-3c15-577c-987a-55473e7390d1", Name: "Express Conference", ChatType: chatTypeVoexCall},
+	}
+	srv := newChatsListServer(t, chats)
+	defer srv.Close()
+
+	cfgPath := writeImportConfig(t, srv.URL, "deploy-bot", "")
+	deps, _, _ := testDeps()
+
+	err := runChatsImport([]string{"--config", cfgPath}, deps)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "veb-adminy") || !strings.Contains(content, "tm-cache-alert") {
+		t.Fatalf("expected imported aliases, got:\n%s", content)
+	}
+	if strings.Contains(content, "Express Conference") || strings.Contains(content, "f40f109f-3c15-577c-987a-55473e7390d1") {
+		t.Fatalf("voex_call chat should not be imported by default:\n%s", content)
+	}
+}
+
+func TestChatsImport_WithBotBinding(t *testing.T) {
+	chats := []botapi.ChatInfo{
+		{GroupChatID: "47694792-1263-5e54-9214-e92ed1e609be", Name: "Веб-админы", ChatType: chatTypeGroup},
+	}
+	srv := newChatsListServer(t, chats)
+	defer srv.Close()
+
+	cfgPath := writeImportConfig(t, srv.URL, "mybot", "")
+	deps, _, _ := testDeps()
+
+	err := runChatsImport([]string{"--config", cfgPath, "--bot", "mybot"}, deps)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "bot: mybot") {
+		t.Fatalf("expected bot binding in config, got:\n%s", content)
+	}
+}
+
+func TestChatsImport_OnlyTypeVoexCall(t *testing.T) {
+	chats := []botapi.ChatInfo{
+		{GroupChatID: "47694792-1263-5e54-9214-e92ed1e609be", Name: "Веб-админы", ChatType: chatTypeGroup},
+		{GroupChatID: "f40f109f-3c15-577c-987a-55473e7390d1", Name: "Express Conference", ChatType: chatTypeVoexCall},
+	}
+	srv := newChatsListServer(t, chats)
+	defer srv.Close()
+
+	cfgPath := writeImportConfig(t, srv.URL, "deploy-bot", "")
+	deps, _, _ := testDeps()
+
+	err := runChatsImport([]string{"--config", cfgPath, "--only-type", chatTypeVoexCall}, deps)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "express-conference") {
+		t.Fatalf("expected voex_call alias, got:\n%s", content)
+	}
+	if strings.Contains(content, "veb-adminy") {
+		t.Fatalf("group_chat should not be imported with --only-type voex_call:\n%s", content)
+	}
+}
+
+func TestChatsImport_RepeatedImportSkipsDuplicates(t *testing.T) {
+	chats := []botapi.ChatInfo{
+		{GroupChatID: "47694792-1263-5e54-9214-e92ed1e609be", Name: "Веб-админы", ChatType: chatTypeGroup},
+	}
+	srv := newChatsListServer(t, chats)
+	defer srv.Close()
+
+	cfgPath := writeImportConfig(t, srv.URL, "deploy-bot", "")
+	deps, _, _ := testDeps()
+
+	if err := runChatsImport([]string{"--config", cfgPath}, deps); err != nil {
+		t.Fatalf("first import failed: %v", err)
+	}
+	deps, stdout, _ := testDeps()
+	if err := runChatsImport([]string{"--config", cfgPath}, deps); err != nil {
+		t.Fatalf("second import failed: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "Skipped chats: 1") {
+		t.Fatalf("expected duplicate skip output, got: %s", stdout.String())
+	}
+
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(data), "47694792-1263-5e54-9214-e92ed1e609be") != 1 {
+		t.Fatalf("expected chat to appear once, got:\n%s", string(data))
+	}
+}
+
+func TestChatsImport_SkipsExistingUUIDUnderAnotherAlias(t *testing.T) {
+	chats := []botapi.ChatInfo{
+		{GroupChatID: "47694792-1263-5e54-9214-e92ed1e609be", Name: "Веб-админы", ChatType: chatTypeGroup},
+	}
+	srv := newChatsListServer(t, chats)
+	defer srv.Close()
+
+	cfgPath := writeImportConfig(t, srv.URL, "deploy-bot", `
+chats:
+  ops-room: 47694792-1263-5e54-9214-e92ed1e609be
+`)
+	deps, stdout, _ := testDeps()
+
+	err := runChatsImport([]string{"--config", cfgPath}, deps)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "already exists as ops-room") {
+		t.Fatalf("expected skip reason in output, got: %s", stdout.String())
+	}
+}
+
+func TestChatsImport_AliasConflictErrors(t *testing.T) {
+	chats := []botapi.ChatInfo{
+		{GroupChatID: "99999999-1263-5e54-9214-e92ed1e609be", Name: "Веб-админы", ChatType: chatTypeGroup},
+	}
+	srv := newChatsListServer(t, chats)
+	defer srv.Close()
+
+	cfgPath := writeImportConfig(t, srv.URL, "deploy-bot", `
+chats:
+  veb-adminy: 47694792-1263-5e54-9214-e92ed1e609be
+`)
+	deps, _, _ := testDeps()
+
+	err := runChatsImport([]string{"--config", cfgPath}, deps)
+	if err == nil || !strings.Contains(err.Error(), "alias \"veb-adminy\" already points to 47694792-1263-5e54-9214-e92ed1e609be") {
+		t.Fatalf("expected alias conflict error, got: %v", err)
+	}
+}
+
+func TestChatsImport_SkipExistingAndOverwrite(t *testing.T) {
+	chats := []botapi.ChatInfo{
+		{GroupChatID: "99999999-1263-5e54-9214-e92ed1e609be", Name: "Веб-админы", ChatType: chatTypeGroup},
+	}
+	srv := newChatsListServer(t, chats)
+	defer srv.Close()
+
+	cfgPath := writeImportConfig(t, srv.URL, "deploy-bot", `
+chats:
+  veb-adminy:
+    id: 47694792-1263-5e54-9214-e92ed1e609be
+    default: true
+`)
+
+	deps, stdout, _ := testDeps()
+	if err := runChatsImport([]string{"--config", cfgPath, "--skip-existing"}, deps); err != nil {
+		t.Fatalf("skip-existing failed: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "alias conflict") {
+		t.Fatalf("expected conflict to be skipped, got: %s", stdout.String())
+	}
+
+	deps, _, _ = testDeps()
+	if err := runChatsImport([]string{"--config", cfgPath, "--overwrite"}, deps); err != nil {
+		t.Fatalf("overwrite failed: %v", err)
+	}
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "99999999-1263-5e54-9214-e92ed1e609be") || !strings.Contains(content, "default: true") {
+		t.Fatalf("expected overwrite to preserve metadata and update UUID, got:\n%s", content)
+	}
+}
+
+func TestChatsImport_JSONOutput(t *testing.T) {
+	chats := []botapi.ChatInfo{
+		{GroupChatID: "47694792-1263-5e54-9214-e92ed1e609be", Name: "Веб-админы", ChatType: chatTypeGroup},
+	}
+	srv := newChatsListServer(t, chats)
+	defer srv.Close()
+
+	cfgPath := writeImportConfig(t, srv.URL, "deploy-bot", "")
+	deps, stdout, _ := testDeps()
+
+	err := runChatsImport([]string{"--config", cfgPath, "--dry-run", "--format", "json"}, deps)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var got chatImportResult
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("invalid json output: %v\n%s", err, stdout.String())
+	}
+	if got.DryRun != true || len(got.Added) != 1 || got.Added[0].Alias != "veb-adminy" {
+		t.Fatalf("unexpected json output: %+v", got)
+	}
+}
+
+func TestChatsImport_RejectsInvalidFlags(t *testing.T) {
+	cfgPath := writeTestConfig(t, `{}`)
+	deps, _, _ := testDeps()
+
+	err := runChatsImport([]string{"--config", cfgPath, "--skip-existing", "--overwrite"}, deps)
+	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("expected mutually exclusive error, got: %v", err)
+	}
+
+	err = runChatsImport([]string{"--config", cfgPath, "--only-type", "personal_chat"}, deps)
+	if err == nil || !strings.Contains(err.Error(), "unsupported --only-type") {
+		t.Fatalf("expected only-type validation error, got: %v", err)
+	}
+}
+
+func TestChatsAdd_UsesImprovedAliasGeneration(t *testing.T) {
+	chats := []botapi.ChatInfo{
+		{GroupChatID: "47694792-1263-5e54-9214-e92ed1e609be", Name: "Веб-админы", ChatType: chatTypeGroup},
+	}
+	srv := newChatsListServer(t, chats)
+	defer srv.Close()
+
+	cfgPath := writeImportConfig(t, srv.URL, "deploy-bot", "")
+	deps, _, _ := testDeps()
+
+	err := runChatsAdd([]string{"--config", cfgPath, "--name", "Веб"}, deps)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "veb-adminy") {
+		t.Fatalf("expected transliterated alias in config, got:\n%s", string(data))
+	}
+}
+
+func TestChatsAdd_NamePreservesExistingBotBinding(t *testing.T) {
+	chats := []botapi.ChatInfo{
+		{GroupChatID: "47694792-1263-5e54-9214-e92ed1e609be", Name: "Веб-админы", ChatType: chatTypeGroup},
+	}
+	srv := newChatsListServer(t, chats)
+	defer srv.Close()
+
+	cfgPath := writeImportConfig(t, srv.URL, "deploy-bot", `
+chats:
+  ops-room:
+    id: 47694792-1263-5e54-9214-e92ed1e609be
+    bot: deploy-bot
+`)
+	deps, _, _ := testDeps()
+
+	err := runChatsAdd([]string{"--config", cfgPath, "--name", "Веб"}, deps)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "ops-room") || !strings.Contains(content, "bot: deploy-bot") {
+		t.Fatalf("expected existing bot binding to be preserved, got:\n%s", content)
+	}
+}
+
+func writeImportConfig(t *testing.T, host, botName, extra string) string {
+	t.Helper()
+	return writeTestConfig(t, fmt.Sprintf(`
+bots:
+  %s:
+    host: %s
+    id: bot-id
+    token: test-token
+%s
+`, botName, host, extra))
+}
+
+func newChatsListServer(t *testing.T, chats []botapi.ChatInfo) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v3/botx/chats/list", func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(map[string]any{"result": chats}); err != nil {
+			t.Fatalf("encode response: %v", err)
+		}
+	})
+	return httptest.NewServer(mux)
 }

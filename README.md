@@ -114,7 +114,7 @@ ingress:
 | `chats info` | Показать детальную информацию о чате |
 | `user search` | Найти пользователя по email, HUID или AD-логину |
 | `config bot add\|rm\|list` | Управление ботами в конфиге |
-| `config chat add\|set\|rm\|list` | Управление алиасами чатов |
+| `config chat add\|set\|import\|rm\|list` | Управление алиасами чатов |
 | `config apikey add\|rm\|list` | Управление API-ключами сервера |
 | `config show` | Показать путь к конфигу и сводку |
 
@@ -430,7 +430,46 @@ express-botx config chat add --name "Deploy Alerts" --alias deploy --bot deploy-
 express-botx config chat add --chat-id UUID --alias general --default
 ```
 
-При `--name` выполняется поиск по подстроке (case-insensitive). Если найдено несколько чатов — выводится список и предлагается уточнить через `--chat-id`. Если `--alias` не указан — генерируется из имени чата (`"Deploy Alerts"` → `deploy-alerts`).
+При `--name` выполняется поиск по подстроке (case-insensitive). Если найдено несколько чатов — выводится список и предлагается уточнить через `--chat-id`. Если `--alias` не указан — генерируется из имени чата, включая кириллицу (`"Deploy Alerts"` → `deploy-alerts`, `"Веб-админы"` → `veb-adminy`).
+
+### `config chat import` — массовый импорт чатов в конфиг
+
+Импортирует все чаты, в которых состоит бот, в секцию `chats:` конфига. По умолчанию импортируются только `group_chat`.
+
+```bash
+# Базовый импорт
+express-botx config chat import --config config-local.yaml
+
+# Импорт только конференций
+express-botx config chat import --config config-local.yaml --only-type voex_call
+
+# Dry run
+express-botx config chat import --config config-local.yaml --dry-run
+
+# Импорт с префиксом и явной привязкой к боту
+express-botx config chat import --config config-local.yaml --bot deploy-bot --prefix team-
+
+# Bootstrap: импортировать чаты, затем проверить алиасы
+express-botx config chat import --config config-local.yaml --only-type group_chat
+express-botx config chat list --config config-local.yaml
+```
+
+Поддерживаются флаги:
+
+```text
+--dry-run
+--only-type group_chat|voex_call
+--prefix team-
+--skip-existing
+--overwrite
+```
+
+Поведение по умолчанию безопасное:
+- если alias уже указывает на тот же UUID, чат пропускается
+- если UUID уже есть под другим alias, чат пропускается
+- если alias занят другим UUID, команда завершается ошибкой
+
+`--skip-existing` превращает alias-конфликт в skip, а `--overwrite` переписывает конфликтующий alias новым UUID. Эти флаги взаимоисключающие.
 
 ### `config apikey` — управление API-ключами сервера
 

@@ -6,11 +6,32 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"github.com/lavr/express-botx/internal/botapi"
 	"github.com/lavr/express-botx/internal/config"
+	iuliia "github.com/mehanizm/iuliia-go"
 )
+
+const (
+	chatTypeGroup    = "group_chat"
+	chatTypeVoexCall = "voex_call"
+)
+
+type importedChat struct {
+	Alias  string `json:"alias"`
+	ID     string `json:"id"`
+	Name   string `json:"name,omitempty"`
+	Type   string `json:"type,omitempty"`
+	Reason string `json:"reason,omitempty"`
+}
+
+type chatImportResult struct {
+	Added   []importedChat `json:"added"`
+	Skipped []importedChat `json:"skipped"`
+	DryRun  bool           `json:"dry_run"`
+}
 
 // checkDefaultConflict returns an error if another chat (other than exclude) is already the default.
 func checkDefaultConflict(chats map[string]config.ChatConfig, exclude string) error {
@@ -332,6 +353,184 @@ func runChatsAliasRm(args []string, deps Deps) error {
 	return nil
 }
 
+func runChatsImport(args []string, deps Deps) error {
+	fs := flag.NewFlagSet("config chat import", flag.ContinueOnError)
+	fs.SetOutput(deps.Stderr)
+	var flags config.Flags
+	var (
+		dryRun       bool
+		onlyType     string
+		prefix       string
+		skipExisting bool
+		overwrite    bool
+	)
+
+	globalFlags(fs, &flags)
+	fs.BoolVar(&dryRun, "dry-run", false, "show planned changes without writing config")
+	fs.StringVar(&onlyType, "only-type", "", "import only chats of this type: group_chat or voex_call")
+	fs.StringVar(&prefix, "prefix", "", "prefix for generated aliases")
+	fs.BoolVar(&skipExisting, "skip-existing", false, "skip alias conflicts instead of failing")
+	fs.BoolVar(&overwrite, "overwrite", false, "overwrite conflicting aliases with imported chat IDs")
+	fs.Usage = func() {
+		fmt.Fprintf(deps.Stderr, "Usage: express-botx config chat import [options]\n\nImport all bot chats into the config file.\n\nOptions:\n")
+		fs.PrintDefaults()
+	}
+
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+
+	if fs.NArg() != 0 {
+		return fmt.Errorf("usage: config chat import [options]")
+	}
+	if skipExisting && overwrite {
+		return fmt.Errorf("--overwrite and --skip-existing are mutually exclusive")
+	}
+
+	resolvedType, err := resolveImportChatType(onlyType)
+	if err != nil {
+		return err
+	}
+
+	cfg, err := config.Load(flags)
+	if err != nil {
+		return err
+	}
+	if err := cfg.ValidateFormat(); err != nil {
+		return err
+	}
+
+	tok, _, err := authenticate(cfg)
+	if err != nil {
+		return err
+	}
+
+	client := botapi.NewClient(cfg.Host, tok, cfg.HTTPTimeout())
+	chats, err := client.ListChats(context.Background())
+	if err != nil {
+		return fmt.Errorf("listing chats: %w", err)
+	}
+
+	saveCfg, err := config.LoadMinimal(flags)
+	if err != nil {
+		return err
+	}
+	if err := saveCfg.ValidateFormat(); err != nil {
+		return err
+	}
+	if saveCfg.Chats == nil {
+		saveCfg.Chats = make(map[string]config.ChatConfig)
+	}
+
+	result := chatImportResult{DryRun: dryRun}
+	generatedAliases := make(map[string]struct{})
+	idIndex := buildChatIDIndex(saveCfg.Chats)
+
+	for _, chat := range importableChats(chats, resolvedType) {
+		if existingAlias, ok := idIndex[chat.GroupChatID]; ok {
+			reason := "already exists"
+			if existingAlias != "" {
+				reason = fmt.Sprintf("already exists as %s", existingAlias)
+			}
+			result.Skipped = append(result.Skipped, importedChat{
+				Alias:  existingAlias,
+				ID:     chat.GroupChatID,
+				Name:   chat.Name,
+				Type:   chat.ChatType,
+				Reason: reason,
+			})
+			continue
+		}
+
+		alias := generateChatAlias(chat.Name, chat.GroupChatID, prefix, generatedAliases)
+		existing, exists := saveCfg.Chats[alias]
+		if exists {
+			if existing.ID == chat.GroupChatID {
+				result.Skipped = append(result.Skipped, importedChat{
+					Alias:  alias,
+					ID:     chat.GroupChatID,
+					Name:   chat.Name,
+					Type:   chat.ChatType,
+					Reason: "already exists",
+				})
+				continue
+			}
+			if skipExisting {
+				result.Skipped = append(result.Skipped, importedChat{
+					Alias:  alias,
+					ID:     chat.GroupChatID,
+					Name:   chat.Name,
+					Type:   chat.ChatType,
+					Reason: fmt.Sprintf("alias conflict with %s", existing.ID),
+				})
+				continue
+			}
+			if !overwrite {
+				return fmt.Errorf("alias %q already points to %s, use --skip-existing or --overwrite", alias, existing.ID)
+			}
+
+			updated := existing
+			updated.ID = chat.GroupChatID
+			if flags.Bot != "" {
+				updated.Bot = flags.Bot
+			}
+			saveCfg.Chats[alias] = updated
+			delete(idIndex, existing.ID)
+			idIndex[chat.GroupChatID] = alias
+			generatedAliases[alias] = struct{}{}
+			result.Added = append(result.Added, importedChat{
+				Alias: alias,
+				ID:    chat.GroupChatID,
+				Name:  chat.Name,
+				Type:  chat.ChatType,
+			})
+			continue
+		}
+
+		saveCfg.Chats[alias] = config.ChatConfig{ID: chat.GroupChatID, Bot: flags.Bot}
+		generatedAliases[alias] = struct{}{}
+		idIndex[chat.GroupChatID] = alias
+		result.Added = append(result.Added, importedChat{
+			Alias: alias,
+			ID:    chat.GroupChatID,
+			Name:  chat.Name,
+			Type:  chat.ChatType,
+		})
+	}
+
+	if !dryRun && len(result.Added) > 0 {
+		if err := saveCfg.SaveConfig(); err != nil {
+			return err
+		}
+	}
+
+	return printOutput(deps.Stdout, saveCfg.Format, func() {
+		fmt.Fprintf(deps.Stdout, "Imported chats: %d\n", len(result.Added))
+		fmt.Fprintf(deps.Stdout, "Skipped chats: %d\n", len(result.Skipped))
+		if len(result.Added) > 0 {
+			fmt.Fprintln(deps.Stdout)
+			fmt.Fprintln(deps.Stdout, "Added:")
+			for _, item := range result.Added {
+				fmt.Fprintf(deps.Stdout, "  %-20s %s", item.Alias, item.ID)
+				if item.Name != "" {
+					fmt.Fprintf(deps.Stdout, "  (%s)", item.Name)
+				}
+				fmt.Fprintln(deps.Stdout)
+			}
+		}
+		if len(result.Skipped) > 0 {
+			fmt.Fprintln(deps.Stdout)
+			fmt.Fprintln(deps.Stdout, "Skipped:")
+			for _, item := range result.Skipped {
+				fmt.Fprintf(deps.Stdout, "  %-20s %s  %s\n", item.Alias, item.ID, item.Reason)
+			}
+		}
+	}, result)
+}
+
 func runChatsAdd(args []string, deps Deps) error {
 	fs := flag.NewFlagSet("config chat add", flag.ContinueOnError)
 	fs.SetOutput(deps.Stderr)
@@ -438,10 +637,6 @@ func runChatsAdd(args []string, deps Deps) error {
 		return fmt.Errorf("no chats matching %q", nameFilter)
 	case 1:
 		chat := matched[0]
-		if alias == "" {
-			alias = slugify(chat.Name)
-		}
-
 		// Reload minimal config for saving (Load resolved runtime fields we don't want to persist)
 		saveCfg, err := config.LoadMinimal(flags)
 		if err != nil {
@@ -449,6 +644,13 @@ func runChatsAdd(args []string, deps Deps) error {
 		}
 		if saveCfg.Chats == nil {
 			saveCfg.Chats = make(map[string]config.ChatConfig)
+		}
+		if alias == "" {
+			if existingAlias, ok := buildChatIDIndex(saveCfg.Chats)[chat.GroupChatID]; ok {
+				alias = existingAlias
+			} else {
+				alias = generateChatAlias(chat.Name, chat.GroupChatID, "", map[string]struct{}{})
+			}
 		}
 
 		if setDefault {
@@ -463,12 +665,18 @@ func runChatsAdd(args []string, deps Deps) error {
 			action = "updated"
 		}
 
+		// Preserve existing bot binding if --bot was not explicitly provided.
+		bot := flags.Bot
+		if bot == "" && exists {
+			bot = existing.Bot
+		}
+
 		// Resolve default: --default sets, --no-default clears, otherwise preserve existing
 		isDefault := setDefault
 		if !setDefault && !unsetDefault && exists {
 			isDefault = existing.Default
 		}
-		saveCfg.Chats[alias] = config.ChatConfig{ID: chat.GroupChatID, Bot: flags.Bot, Default: isDefault}
+		saveCfg.Chats[alias] = config.ChatConfig{ID: chat.GroupChatID, Bot: bot, Default: isDefault}
 		if err := saveCfg.SaveConfig(); err != nil {
 			return err
 		}
@@ -488,13 +696,70 @@ func runChatsAdd(args []string, deps Deps) error {
 	}
 }
 
-// slugify converts a chat name to a URL-friendly alias.
-// "Deploy Alerts" → "deploy-alerts"
-// "CI/CD notifications" → "ci-cd-notifications"
+func resolveImportChatType(onlyType string) (string, error) {
+	switch onlyType {
+	case "", chatTypeGroup:
+		return chatTypeGroup, nil
+	case chatTypeVoexCall:
+		return chatTypeVoexCall, nil
+	default:
+		return "", fmt.Errorf("unsupported --only-type %q, use group_chat or voex_call", onlyType)
+	}
+}
+
+func importableChats(chats []botapi.ChatInfo, onlyType string) []botapi.ChatInfo {
+	filtered := make([]botapi.ChatInfo, 0, len(chats))
+	for _, chat := range chats {
+		if chat.ChatType == onlyType {
+			filtered = append(filtered, chat)
+		}
+	}
+	sort.Slice(filtered, func(i, j int) bool {
+		left := strings.ToLower(filtered[i].Name)
+		right := strings.ToLower(filtered[j].Name)
+		if left != right {
+			return left < right
+		}
+		return filtered[i].GroupChatID < filtered[j].GroupChatID
+	})
+	return filtered
+}
+
+func buildChatIDIndex(chats map[string]config.ChatConfig) map[string]string {
+	index := make(map[string]string, len(chats))
+	for alias, chat := range chats {
+		index[chat.ID] = alias
+	}
+	return index
+}
+
+func generateChatAlias(name, uuid, prefix string, taken map[string]struct{}) string {
+	base := slugifyChatAlias(name)
+	if base == "" {
+		base = "chat-" + shortChatID(uuid)
+	}
+	if normalizedPrefix := slugifyChatAlias(prefix); normalizedPrefix != "" {
+		base = normalizedPrefix + "-" + base
+	}
+	if _, exists := taken[base]; !exists {
+		return base
+	}
+	for i := 2; ; i++ {
+		candidate := fmt.Sprintf("%s-%d", base, i)
+		if _, exists := taken[candidate]; !exists {
+			return candidate
+		}
+	}
+}
+
 func slugify(name string) string {
-	name = strings.ToLower(name)
+	return slugifyChatAlias(name)
+}
+
+func slugifyChatAlias(name string) string {
+	name = transliterateToASCII(strings.ToLower(name))
 	var b strings.Builder
-	lastHyphen := true // treat start as hyphen to avoid leading hyphen
+	lastHyphen := true
 	for _, r := range name {
 		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
 			b.WriteRune(r)
@@ -505,6 +770,17 @@ func slugify(name string) string {
 		}
 	}
 	return strings.TrimRight(b.String(), "-")
+}
+
+func shortChatID(uuid string) string {
+	if len(uuid) < 8 {
+		return uuid
+	}
+	return uuid[:8]
+}
+
+func transliterateToASCII(s string) string {
+	return iuliia.Wikipedia.Translate(s)
 }
 
 func printChatsUsage(w io.Writer) {

@@ -58,7 +58,7 @@ func runConfigBot(args []string, deps Deps) error {
 func runConfigChat(args []string, deps Deps) error {
 	if len(args) == 0 {
 		printConfigChatUsage(deps.Stderr)
-		return fmt.Errorf("subcommand required: add, set, rm, list")
+		return fmt.Errorf("subcommand required: add, set, import, rm, list")
 	}
 
 	switch args[0] {
@@ -66,6 +66,8 @@ func runConfigChat(args []string, deps Deps) error {
 		return runChatsAdd(args[1:], deps)
 	case "set":
 		return runChatsAliasSet(args[1:], deps)
+	case "import":
+		return runChatsImport(args[1:], deps)
 	case "rm":
 		return runChatsAliasRm(args[1:], deps)
 	case "list":
@@ -180,6 +182,7 @@ func printConfigChatUsage(w io.Writer) {
 Commands:
   add     Find a chat and add it to config
   set     Add or update a chat alias
+  import  Import all bot chats into config
   rm      Remove a chat alias
   list    List configured chat aliases
 
