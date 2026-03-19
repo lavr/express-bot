@@ -50,7 +50,7 @@ func runBotPing(args []string, deps Deps) error {
 		fs.PrintDefaults()
 	}
 
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(reorderArgs(fs, args)); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
@@ -130,7 +130,7 @@ func runBotInfo(args []string, deps Deps) error {
 		fs.PrintDefaults()
 	}
 
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(reorderArgs(fs, args)); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
@@ -188,7 +188,7 @@ func runBotList(args []string, deps Deps) error {
 		fs.PrintDefaults()
 	}
 
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(reorderArgs(fs, args)); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
@@ -237,7 +237,7 @@ func runBotAdd(args []string, deps Deps) error {
 		fs.PrintDefaults()
 	}
 
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(reorderArgs(fs, args)); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
@@ -345,7 +345,7 @@ func runBotRm(args []string, deps Deps) error {
 		fs.PrintDefaults()
 	}
 
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(reorderArgs(fs, args)); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
@@ -390,7 +390,7 @@ func runBotToken(args []string, deps Deps) error {
 		fs.PrintDefaults()
 	}
 
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(reorderArgs(fs, args)); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}

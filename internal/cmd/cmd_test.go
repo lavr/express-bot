@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"flag"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,6 +28,83 @@ func writeTestConfig(t *testing.T, content string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+// --- reorderArgs ---
+
+func TestReorderArgs(t *testing.T) {
+	// Build a FlagSet similar to send command.
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	var s string
+	var b bool
+	fs.StringVar(&s, "config", "", "")
+	fs.StringVar(&s, "chat-id", "", "")
+	fs.BoolVar(&b, "silent", false, "")
+
+	tests := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{
+			"flags before positional (no change)",
+			[]string{"--config", "c.yaml", "hello"},
+			[]string{"--config", "c.yaml", "hello"},
+		},
+		{
+			"positional before flags",
+			[]string{"hello", "--config", "c.yaml"},
+			[]string{"--config", "c.yaml", "hello"},
+		},
+		{
+			"positional between flags",
+			[]string{"--chat-id", "uuid", "hello", "--config", "c.yaml"},
+			[]string{"--chat-id", "uuid", "--config", "c.yaml", "hello"},
+		},
+		{
+			"bool flag after positional",
+			[]string{"hello", "--silent"},
+			[]string{"--silent", "hello"},
+		},
+		{
+			"flag=value after positional",
+			[]string{"hello", "--config=c.yaml"},
+			[]string{"--config=c.yaml", "hello"},
+		},
+		{
+			"double dash stops reorder",
+			[]string{"--", "--config", "c.yaml"},
+			[]string{"--", "--config", "c.yaml"},
+		},
+		{
+			"multiple positional args preserved order",
+			[]string{"hello", "world", "--config", "c.yaml"},
+			[]string{"--config", "c.yaml", "hello", "world"},
+		},
+		{
+			"no flags",
+			[]string{"hello", "world"},
+			[]string{"hello", "world"},
+		},
+		{
+			"no args",
+			nil,
+			nil,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := reorderArgs(fs, tt.args)
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %v, want %v", got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Fatalf("got %v, want %v", got, tt.want)
+				}
+			}
+		})
+	}
 }
 
 // --- Run dispatcher ---

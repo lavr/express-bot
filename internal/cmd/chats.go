@@ -74,7 +74,7 @@ func runChatsList(args []string, deps Deps) error {
 		fs.PrintDefaults()
 	}
 
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(reorderArgs(fs, args)); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
@@ -131,7 +131,7 @@ func runChatsInfo(args []string, deps Deps) error {
 		fs.PrintDefaults()
 	}
 
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(reorderArgs(fs, args)); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
@@ -189,7 +189,7 @@ func runChatsAliasList(args []string, deps Deps) error {
 		fs.PrintDefaults()
 	}
 
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(reorderArgs(fs, args)); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
@@ -246,7 +246,7 @@ func runChatsAliasSet(args []string, deps Deps) error {
 		fs.PrintDefaults()
 	}
 
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(reorderArgs(fs, args)); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
@@ -319,7 +319,7 @@ func runChatsAliasRm(args []string, deps Deps) error {
 		fs.PrintDefaults()
 	}
 
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(reorderArgs(fs, args)); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
@@ -376,7 +376,7 @@ func runChatsImport(args []string, deps Deps) error {
 		fs.PrintDefaults()
 	}
 
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(reorderArgs(fs, args)); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
@@ -549,7 +549,7 @@ func runChatsAdd(args []string, deps Deps) error {
 		fs.PrintDefaults()
 	}
 
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(reorderArgs(fs, args)); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}

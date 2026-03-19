@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"strconv"
@@ -21,8 +22,6 @@ import (
 var Version = "dev"
 
 // hasHelpFlag checks if args contain --help or -h anywhere.
-// Go's flag package stops parsing flags after the first non-flag argument,
-// so --help after a positional arg would be ignored.
 func hasHelpFlag(args []string) bool {
 	for _, a := range args {
 		if a == "--help" || a == "-h" {
@@ -30,6 +29,41 @@ func hasHelpFlag(args []string) bool {
 		}
 	}
 	return false
+}
+
+// reorderArgs moves positional arguments after flags so that Go's flag
+// package (which stops at the first non-flag arg) can parse all flags
+// regardless of their position. This gives argparse-like behavior.
+func reorderArgs(fs *flag.FlagSet, args []string) []string {
+	var flags, positional []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			positional = append(positional, args[i:]...)
+			break
+		}
+		if len(a) > 0 && a[0] == '-' {
+			flags = append(flags, a)
+			// If --flag=value, the value is already in this arg.
+			if strings.Contains(a, "=") {
+				continue
+			}
+			// Check if this flag takes a value (i.e. is not boolean).
+			name := strings.TrimLeft(a, "-")
+			if f := fs.Lookup(name); f != nil {
+				if bf, ok := f.Value.(interface{ IsBoolFlag() bool }); !ok || !bf.IsBoolFlag() {
+					// Consume next arg as the value.
+					if i+1 < len(args) {
+						i++
+						flags = append(flags, args[i])
+					}
+				}
+			}
+		} else {
+			positional = append(positional, a)
+		}
+	}
+	return append(flags, positional...)
 }
 
 // Deps holds external dependencies injected from main.

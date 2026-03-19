@@ -46,7 +46,7 @@ func runUserSearch(args []string, deps Deps) error {
 		fs.PrintDefaults()
 	}
 
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(reorderArgs(fs, args)); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
