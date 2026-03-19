@@ -13,7 +13,7 @@ ARG APM_TAG=""
 #   docker build --build-arg BUILD_TAGS="sentry rabbitmq" .
 #   docker build --build-arg BUILD_TAGS="sentry kafka" .
 #   docker build --build-arg BUILD_TAGS="sentry rabbitmq kafka" .
-ARG BUILD_TAGS="sentry"
+ARG BUILD_TAGS="sentry newrelic rabbitmq kafka"
 RUN CGO_ENABLED=0 go build -tags "${BUILD_TAGS} ${APM_TAG}" -ldflags="-s -w -X main.version=${VERSION}" -o /express-botx .
 
 FROM alpine:3.21
