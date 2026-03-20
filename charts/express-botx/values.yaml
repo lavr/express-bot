@@ -41,7 +41,8 @@ config:
     #   default_chat_id: monitoring
 
 # Queue configuration (required for serve-enqueue and worker modes).
-# Queue driver must be compiled in via BUILD_TAGS (rabbitmq or kafka).
+# Official lavr/express-botx images already include RabbitMQ and Kafka drivers.
+# If you use a custom image, compile the required driver via BUILD_TAGS.
   # queue:
   #   driver: kafka          # rabbitmq | kafka
   #   url: broker:9092

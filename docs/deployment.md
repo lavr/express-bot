@@ -9,7 +9,9 @@
 ### Установка
 
 ```bash
-curl -sL https://github.com/lavr/express-botx/releases/latest/download/express-botx-linux-amd64.tar.gz | tar xz
+OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+ARCH=$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/')
+curl -sL "https://github.com/lavr/express-botx/releases/latest/download/express-botx-${OS}-${ARCH}.tar.gz" | tar xz
 sudo mv express-botx /usr/local/bin/
 sudo chmod +x /usr/local/bin/express-botx
 ```
@@ -107,7 +109,7 @@ docker run -d \
 
 ### Сборка с поддержкой очередей
 
-Базовый Docker-образ собран без поддержки очередей. Для RabbitMQ/Kafka нужна пересборка:
+Публичный образ `lavr/express-botx` уже собран с поддержкой RabbitMQ и Kafka, поэтому `enqueue` и `worker` можно запускать без пересборки. Отдельная сборка нужна только если вы хотите свой набор build tags или кастомный образ:
 
 ```bash
 # С RabbitMQ

@@ -6,7 +6,13 @@
 
 Параметры загружаются слоями, каждый следующий перекрывает предыдущий:
 
-1. **YAML-файл** (`--config`, `EXPRESS_BOTX_CONFIG`, `./express-botx.yaml` или `~/.config/express-botx/config.yaml`)
+1. **YAML-файл** (`--config`, `EXPRESS_BOTX_CONFIG`, `./express-botx.yaml` или `<os.UserConfigDir>/express-botx/config.yaml`)
+
+Автопоиск использует платформенный каталог из `os.UserConfigDir()`:
+
+- Linux: `~/.config/express-botx/config.yaml`
+- macOS: `~/Library/Application Support/express-botx/config.yaml`
+- Windows: `%AppData%/express-botx/config.yaml`
 2. **Переменные окружения**
 3. **Флаги командной строки**
 
