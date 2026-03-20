@@ -41,6 +41,8 @@ bump() {
     esac
 }
 
+PICKED_VERSION=""
+
 pick_version() {
     local current="$1" label="$2"
     local v_patch v_minor v_major
@@ -48,24 +50,24 @@ pick_version() {
     v_minor=$(bump "$current" minor)
     v_major=$(bump "$current" major)
 
-    echo ""
-    echo "$label (current: $current):"
-    echo "  1) patch  -> $v_patch"
-    echo "  2) minor  -> $v_minor"
-    echo "  3) major  -> $v_major"
-    printf "Choose [1/2/3]: "
-    read -r choice
+    echo "" > /dev/tty
+    echo "$label (current: $current):" > /dev/tty
+    echo "  1) patch  -> $v_patch" > /dev/tty
+    echo "  2) minor  -> $v_minor" > /dev/tty
+    echo "  3) major  -> $v_major" > /dev/tty
+    printf "Choose [1/2/3]: " > /dev/tty
+    read -r choice < /dev/tty
     case "$choice" in
-        1) echo "$v_patch" ;;
-        2) echo "$v_minor" ;;
-        3) echo "$v_major" ;;
-        *) echo "Invalid choice"; exit 1 ;;
+        1) PICKED_VERSION="$v_patch" ;;
+        2) PICKED_VERSION="$v_minor" ;;
+        3) PICKED_VERSION="$v_major" ;;
+        *) echo "Invalid choice" > /dev/tty; exit 1 ;;
     esac
 }
 
 confirm() {
-    printf "%s [y/N] " "$1"
-    read -r ans
+    printf "%s [y/N] " "$1" > /dev/tty
+    read -r ans < /dev/tty
     [[ "$ans" =~ ^[Yy]$ ]] || exit 0
 }
 
@@ -79,8 +81,8 @@ status() {
 }
 
 release_app() {
-    local version
-    version=$(pick_version "$(current_app_tag)" "App version")
+    pick_version "$(current_app_tag)" "App version"
+    local version="$PICKED_VERSION"
 
     if git tag -l "$version" | grep -q .; then
         echo "Error: tag $version already exists"
@@ -99,8 +101,8 @@ release_app() {
 }
 
 release_chart() {
-    local version
-    version=$(pick_version "$(current_chart_tag)" "Chart version")
+    pick_version "$(current_chart_tag)" "Chart version"
+    local version="$PICKED_VERSION"
     local tag="chart-${version}"
 
     if git tag -l "$tag" | grep -q .; then
@@ -125,9 +127,10 @@ release_chart() {
 }
 
 release_both() {
-    local app_version chart_ver
-    app_version=$(pick_version "$(current_app_tag)" "App version")
-    chart_ver=$(pick_version "$(current_chart_tag)" "Chart version")
+    pick_version "$(current_app_tag)" "App version"
+    local app_version="$PICKED_VERSION"
+    pick_version "$(current_chart_tag)" "Chart version"
+    local chart_ver="$PICKED_VERSION"
     local chart_tag="chart-${chart_ver}"
 
     if git tag -l "$app_version" | grep -q .; then
