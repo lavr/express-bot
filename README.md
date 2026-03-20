@@ -182,13 +182,13 @@ helm install express-botx oci://ghcr.io/lavr/charts/express-botx -f values.yaml
 
 | Документ | Описание |
 |----------|----------|
-| [docs/install.md](docs/install .md) | Варианты установки |
+| [docs/install.md](docs/install.md) | Варианты установки |
 | [docs/commands.md](docs/commands.md) | Все команды и флаги |
 | [docs/configuration.md](docs/configuration.md) | Полный референс конфигурации |
 | [docs/integrations.md](docs/integrations.md) | Alertmanager, Grafana, примеры |
 | [docs/deployment.md](docs/deployment.md) | Docker, Helm, systemd, docker-compose |
 | [docs/async-queues.md](docs/async-queues.md) | RabbitMQ, Kafka, архитектура очередей |
-| [docs/quickstart.md](docs/quickstart.md) | Базовые сценарии настрофки |
+| [docs/quickstart.md](docs/quickstart.md) | Базовые сценарии настройки |
 
 ## Лицензия
 
