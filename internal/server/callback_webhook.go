@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -43,7 +44,7 @@ func (h *WebhookHandler) Handle(ctx context.Context, event string, payload []byt
 		defer cancel()
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.url, strings.NewReader(string(payload)))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.url, bytes.NewReader(payload))
 	if err != nil {
 		return fmt.Errorf("webhook handler %q: failed to create request: %w", h.url, err)
 	}
