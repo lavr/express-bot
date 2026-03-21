@@ -210,11 +210,11 @@ go test ./internal/server/ -run TestExecHandlerTimeout -v
 
 ### 2.4 WebhookHandler — реализация
 
-- [ ] Создать `internal/server/callback_webhook.go`
-- [ ] `NewWebhookHandler(url string, timeout time.Duration) *WebhookHandler`
-- [ ] `Handle()`: HTTP POST, body = оригинальный JSON
-- [ ] Headers: `Content-Type`, `X-Express-Event`, `X-Express-Sync-ID`
-- [ ] `Type()` → `"webhook"`
+- [x] Создать `internal/server/callback_webhook.go`
+- [x] `NewWebhookHandler(url string, timeout time.Duration) *WebhookHandler`
+- [x] `Handle()`: HTTP POST, body = оригинальный JSON
+- [x] Headers: `Content-Type`, `X-Express-Event`, `X-Express-Sync-ID`
+- [x] `Type()` → `"webhook"`
 
 ```
 go test ./internal/server/ -run TestWebhookHandler -v
