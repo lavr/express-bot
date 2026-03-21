@@ -35,6 +35,37 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if payload.BotID == "" || payload.SyncID == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "missing required fields: bot_id and sync_id"})
+		return
+	}
+
+	if payload.From.GroupChatID == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "missing required field: from.group_chat_id"})
+		return
+	}
+
+	// If JWT was verified, ensure payload bot_id matches the authenticated aud claim.
+	// This prevents cross-bot impersonation where a token signed for bot A
+	// is used with a payload claiming bot_id = bot B.
+	if jwtBotID := JWTAud(r.Context()); jwtBotID != "" && jwtBotID != payload.BotID {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "bot_id does not match authenticated token"})
+		return
+	}
+
+	if payload.Command.Body == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "missing required field: command.body"})
+		return
+	}
+
 	event := parseEventType(payload.Command.Body)
 
 	matched := s.callbackRouter.Route(event)
@@ -94,6 +125,13 @@ func (s *Server) handleNotificationCallback(w http.ResponseWriter, r *http.Reque
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "invalid JSON payload"})
+		return
+	}
+
+	if payload.SyncID == "" || payload.Status == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "missing required fields: sync_id and status"})
 		return
 	}
 

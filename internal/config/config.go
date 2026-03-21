@@ -384,6 +384,11 @@ func (c *Config) IsMultiBot() bool {
 	return c.multiBot
 }
 
+// SetMultiBot sets the multi-bot flag. Intended for testing only.
+func (c *Config) SetMultiBot(v bool) {
+	c.multiBot = v
+}
+
 // HTTPTimeout returns the HTTP client timeout for the bot.
 // Defaults to 10 seconds if not configured.
 func (c *Config) HTTPTimeout() time.Duration {

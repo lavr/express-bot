@@ -801,8 +801,10 @@ components:
           items:
             type: object
         async_files:
-          type: boolean
-          description: Whether files are loaded asynchronously
+          type: array
+          description: Metadata for asynchronously loaded files
+          items:
+            type: object
         entities:
           type: array
           description: Message entities (mentions, markup, etc.)

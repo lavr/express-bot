@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -13,6 +14,21 @@ import (
 
 	vlog "github.com/lavr/express-botx/internal/log"
 )
+
+// contextKey is an unexported type for context keys in this package.
+type contextKey string
+
+// jwtAudKey is the context key for the verified JWT audience (bot ID).
+const jwtAudKey contextKey = "jwt_aud"
+
+// JWTAud returns the verified JWT audience (bot ID) from the request context.
+// Returns empty string if JWT verification was not performed or aud is not set.
+func JWTAud(ctx context.Context) string {
+	if v, ok := ctx.Value(jwtAudKey).(string); ok {
+		return v
+	}
+	return ""
+}
 
 var (
 	errJWTMalformed       = errors.New("malformed JWT: expected 3 parts")
@@ -149,14 +165,16 @@ func callbackJWTMiddleware(h http.Handler, secretLookup func(botID string) (stri
 			return
 		}
 
-		_, err := verifyCallbackJWT(token, secretLookup)
+		claims, err := verifyCallbackJWT(token, secretLookup)
 		if err != nil {
 			vlog.Info("server: callback JWT verification failed: %v", err)
 			writeJWTError(w, "JWT verification failed")
 			return
 		}
 
-		h.ServeHTTP(w, r)
+		// Store verified aud (bot ID) in context for downstream handlers.
+		ctx := context.WithValue(r.Context(), jwtAudKey, claims.Aud)
+		h.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 

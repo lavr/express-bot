@@ -75,7 +75,7 @@ type CallbackPayload struct {
 	BotID        string                 `json:"bot_id"`
 	ProtoVersion int                    `json:"proto_version,omitempty"`
 	Attachments  json.RawMessage        `json:"attachments,omitempty"`
-	Async        bool                   `json:"async_files,omitempty"`
+	AsyncFiles   json.RawMessage        `json:"async_files,omitempty"`
 	Entities     json.RawMessage        `json:"entities,omitempty"`
 }
 

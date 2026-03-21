@@ -56,6 +56,7 @@ func TestBuildBotSecretLookup_MultiBot(t *testing.T) {
 			"gamma": {ID: "bot-ccc", Token: "token-only"},
 		},
 	}
+	cfg.SetMultiBot(true)
 	lookup, err := buildBotSecretLookup(cfg)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

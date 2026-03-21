@@ -277,12 +277,41 @@ Options:
 		if err := cb.Validate(); err != nil {
 			return fmt.Errorf("callbacks config: %w", err)
 		}
-		secretLookup, err := buildBotSecretLookup(cfg)
-		if err != nil {
-			return fmt.Errorf("callbacks secret lookup: %w", err)
+		// Validate handler types supported by CLI (library users may register custom types).
+		for i, rule := range cb.Rules {
+			switch rule.Handler.Type {
+			case "exec", "webhook":
+				// ok
+			default:
+				return fmt.Errorf("callbacks rule #%d: unsupported handler type %q (supported: exec, webhook)", i+1, rule.Handler.Type)
+			}
 		}
-		cbOpts := []server.CallbackOption{
-			server.WithCallbackSecretLookup(secretLookup),
+		// Verify that bot secrets are available when JWT verification is enabled.
+		verifyJWT := cb.VerifyJWT == nil || *cb.VerifyJWT
+		if verifyJWT {
+			hasSecret := false
+			if cfg.IsMultiBot() {
+				for name, bot := range cfg.Bots {
+					if bot.Secret != "" {
+						hasSecret = true
+					} else {
+						vlog.V1("callbacks: bot %q has no secret configured; JWT verification will fail for callbacks from this bot", name)
+					}
+				}
+			} else {
+				hasSecret = cfg.BotSecret != ""
+			}
+			if !hasSecret {
+				return fmt.Errorf("callbacks config: verify_jwt is enabled but no bot secret configured; set verify_jwt: false or configure bot secrets")
+			}
+		}
+		var cbOpts []server.CallbackOption
+		if verifyJWT {
+			secretLookup, err := buildBotSecretLookup(cfg)
+			if err != nil {
+				return fmt.Errorf("callbacks secret lookup: %w", err)
+			}
+			cbOpts = append(cbOpts, server.WithCallbackSecretLookup(secretLookup))
 		}
 		srvOpts = append(srvOpts, server.WithCallbacks(*cb, cbOpts...))
 	}
@@ -489,7 +518,7 @@ type sendResponseJSON struct {
 func buildBotSecretLookup(cfg *config.Config) (func(botID string) (string, error), error) {
 	cache := make(map[string]string)
 
-	if len(cfg.Bots) > 0 {
+	if cfg.IsMultiBot() {
 		for _, bot := range cfg.Bots {
 			if bot.ID == "" || bot.Secret == "" {
 				continue
