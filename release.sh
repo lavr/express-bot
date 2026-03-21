@@ -96,8 +96,9 @@ release_app() {
     confirm "Create tag $version?"
 
     git tag "$version"
-    echo "Created tag: $version"
-    echo "Run 'git push origin $version' to trigger release"
+    git push origin main
+    git push origin "$version"
+    echo "Pushed tag: $version"
 }
 
 release_chart() {
@@ -122,8 +123,9 @@ release_chart() {
     git commit -m "chart version bump"
     git tag "$tag"
 
-    echo "Created commit and tag: $tag"
-    echo "Run 'git push origin main $tag' to trigger chart release"
+    git push origin main
+    git push origin "$tag"
+    echo "Pushed tag: $tag"
 }
 
 release_both() {
@@ -157,7 +159,6 @@ release_both() {
     confirm "Proceed?"
 
     git tag "$app_version"
-    echo "Created tag: $app_version"
 
     sed -i '' "s/^version: .*/version: ${chart_ver}/" "$CHART_FILE"
     sed -i '' "s/^appVersion: .*/appVersion: \"${app_version}\"/" "$CHART_FILE"
@@ -165,8 +166,10 @@ release_both() {
     git commit -m "chart version bump"
     git tag "$chart_tag"
 
-    echo "Created commit and tags: $app_version, $chart_tag"
-    echo "Run 'git push origin main $app_version $chart_tag' to trigger releases"
+    git push origin main
+    git push origin "$app_version"
+    git push origin "$chart_tag"
+    echo "Pushed tags: $app_version, $chart_tag"
 }
 
 case "${1:-}" in
