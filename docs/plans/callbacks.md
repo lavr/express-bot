@@ -447,8 +447,8 @@ go run . serve
 
 ### 8.3 Примеры
 
-- [ ] Добавить закомментированный пример `callbacks` в `config-local.yaml`
-- [ ] Добавить пример exec-скрипта в `examples/callback-handler.sh`
+- [x] Добавить закомментированный пример `callbacks` в `config-local.yaml`
+- [x] Добавить пример exec-скрипта в `examples/callback-handler.sh`
 
 ```
 # Проверка парсинга конфига с раскомментированным примером
