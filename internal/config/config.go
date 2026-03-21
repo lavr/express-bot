@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -769,6 +770,13 @@ func LoadMinimal(flags Flags) (*Config, error) {
 	return cfg, nil
 }
 
+// ResolveConfigPath determines the config file path from: CLI flag → env → auto-discovery.
+// Returns the path and whether it was explicitly specified (flag or env).
+// Unlike LoadMinimal, this does not read or parse the file.
+func ResolveConfigPath(flagPath string) (path string, explicit bool) {
+	return resolveConfigPath(flagPath)
+}
+
 // resolveConfigPath determines the config file path from: CLI flag → env → auto-discovery.
 // Returns the path and whether it was explicitly specified (flag or env).
 func resolveConfigPath(flagPath string) (path string, explicit bool) {
@@ -883,6 +891,34 @@ func (c *CallbacksConfig) Validate() error {
 			if _, err := time.ParseDuration(rule.Handler.Timeout); err != nil {
 				return fmt.Errorf("callbacks rule #%d: invalid timeout %q: %w", i+1, rule.Handler.Timeout, err)
 			}
+		}
+	}
+	return nil
+}
+
+// ValidateConfig parses raw YAML data into a Config and runs structural
+// validation (bot configs, default chat, chat-bot references, callbacks).
+// It does not resolve secrets or bot credentials.
+func ValidateConfig(data []byte) error {
+	if len(bytes.TrimSpace(data)) == 0 {
+		return fmt.Errorf("config file is empty")
+	}
+	var cfg Config
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return fmt.Errorf("invalid YAML: %w", err)
+	}
+	if err := cfg.validateBotConfigs(); err != nil {
+		return err
+	}
+	if err := cfg.ValidateDefaultChat(); err != nil {
+		return err
+	}
+	if err := cfg.ValidateChatBots(false); err != nil {
+		return err
+	}
+	if cfg.Server.Callbacks != nil {
+		if err := cfg.Server.Callbacks.Validate(); err != nil {
+			return err
 		}
 	}
 	return nil

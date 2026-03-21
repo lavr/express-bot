@@ -1,10 +1,16 @@
 package cmd
 
 import (
+	"bufio"
+	"bytes"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 
 	"github.com/lavr/express-botx/internal/config"
 )
@@ -12,7 +18,7 @@ import (
 func runConfig(args []string, deps Deps) error {
 	if len(args) == 0 {
 		printConfigUsage(deps.Stderr)
-		return fmt.Errorf("subcommand required: bot, chat, apikey, show")
+		return fmt.Errorf("subcommand required: bot, chat, apikey, show, edit")
 	}
 
 	switch args[0] {
@@ -24,6 +30,8 @@ func runConfig(args []string, deps Deps) error {
 		return runConfigAPIKey(args[1:], deps)
 	case "show":
 		return runConfigShow(args[1:], deps)
+	case "edit":
+		return runConfigEdit(args[1:], deps)
 	case "--help", "-h":
 		printConfigUsage(deps.Stderr)
 		return nil
@@ -151,6 +159,187 @@ func runConfigShow(args []string, deps Deps) error {
 	}, summary)
 }
 
+func runConfigEdit(args []string, deps Deps) error {
+	fs := flag.NewFlagSet("config edit", flag.ContinueOnError)
+	fs.SetOutput(deps.Stderr)
+	var flags config.Flags
+
+	fs.StringVar(&flags.ConfigPath, "config", "", "path to config file")
+	fs.Usage = func() {
+		fmt.Fprintf(deps.Stderr, "Usage: express-botx config edit [options]\n\nOpen config file in $EDITOR for manual editing.\n\nOptions:\n")
+		fs.PrintDefaults()
+	}
+
+	if err := fs.Parse(reorderArgs(fs, args)); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+
+	configPath, _ := config.ResolveConfigPath(flags.ConfigPath)
+	if configPath == "" {
+		configPath = "express-botx.yaml"
+	}
+	info, err := os.Stat(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("config file not found: %s", configPath)
+		}
+		return fmt.Errorf("accessing config file: %w", err)
+	}
+	configMode := info.Mode().Perm()
+
+	// Resolve symlinks so atomic rename targets the real file, not the symlink.
+	resolvedConfigPath, err := filepath.EvalSymlinks(configPath)
+	if err != nil {
+		return fmt.Errorf("resolving config path: %w", err)
+	}
+
+	original, err := os.ReadFile(resolvedConfigPath)
+	if err != nil {
+		return fmt.Errorf("reading config: %w", err)
+	}
+
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		editor = "vi"
+	}
+
+	tmpDir, err := os.MkdirTemp("", "express-botx-config-*")
+	if err != nil {
+		return fmt.Errorf("creating temp dir: %w", err)
+	}
+	cleanupTmp := true
+	defer func() {
+		if cleanupTmp {
+			os.RemoveAll(tmpDir)
+		}
+	}()
+
+	tmpFile := filepath.Join(tmpDir, "config.yaml")
+	if err := os.WriteFile(tmpFile, original, 0o600); err != nil {
+		return fmt.Errorf("writing temp file: %w", err)
+	}
+
+	editorParts := splitEditorCmd(editor)
+	if len(editorParts) == 0 {
+		return fmt.Errorf("EDITOR is set but empty")
+	}
+	reader := bufio.NewReader(deps.Stdin)
+
+	for {
+		editorArgs := make([]string, len(editorParts)-1, len(editorParts))
+		copy(editorArgs, editorParts[1:])
+		editorArgs = append(editorArgs, tmpFile)
+		cmd := exec.Command(editorParts[0], editorArgs...)
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stderr
+		cmd.Stderr = os.Stderr
+
+		if err := cmd.Run(); err != nil {
+			cleanupTmp = false
+			fmt.Fprintf(deps.Stderr, "Your edits are preserved at: %s\n", tmpFile)
+			return fmt.Errorf("editor exited with error: %w", err)
+		}
+
+		newData, err := os.ReadFile(tmpFile)
+		if err != nil {
+			cleanupTmp = false
+			fmt.Fprintf(deps.Stderr, "Your edits are preserved at: %s\n", tmpFile)
+			return fmt.Errorf("reading edited file: %w", err)
+		}
+
+		if bytes.Equal(newData, original) {
+			fmt.Fprintln(deps.Stderr, "Edit cancelled, no changes made")
+			return nil
+		}
+
+		if err := config.ValidateConfig(newData); err != nil {
+			fmt.Fprintf(deps.Stderr, "Validation error: %s\n", err)
+
+			for {
+				fmt.Fprint(deps.Stderr, "[r]etry editing / [d]iscard changes? (r/d) ")
+
+				answer, readErr := reader.ReadString('\n')
+				answer = strings.TrimSpace(strings.ToLower(answer))
+
+				if readErr != nil && answer == "" {
+					cleanupTmp = false
+					fmt.Fprintf(deps.Stderr, "\nYour edits are preserved at: %s\n", tmpFile)
+					return fmt.Errorf("unable to read user input: %w", readErr)
+				}
+				if answer == "r" || answer == "d" {
+					if answer == "d" {
+						fmt.Fprintln(deps.Stderr, "Changes discarded")
+						return nil
+					}
+					break
+				}
+				fmt.Fprintf(deps.Stderr, "Please enter 'r' to retry or 'd' to discard.\n")
+			}
+			continue
+		}
+
+		// Check for concurrent modifications right before writing.
+		currentData, err := os.ReadFile(resolvedConfigPath)
+		if err != nil {
+			cleanupTmp = false
+			fmt.Fprintf(deps.Stderr, "Your edits are preserved at: %s\n", tmpFile)
+			return fmt.Errorf("reading config for conflict check: %w", err)
+		}
+		if !bytes.Equal(currentData, original) {
+			cleanupTmp = false
+			fmt.Fprintf(deps.Stderr, "Config file was modified externally while editing, aborting to avoid data loss\n")
+			fmt.Fprintf(deps.Stderr, "Your edits are preserved at: %s\n", tmpFile)
+			return fmt.Errorf("config file changed on disk")
+		}
+
+		// saveErr preserves the temp file and informs the user on write failure.
+		saveErr := func(err error) error {
+			cleanupTmp = false
+			fmt.Fprintf(deps.Stderr, "Your edits are preserved at: %s\n", tmpFile)
+			return err
+		}
+
+		// Atomic write: write to temp file in the same directory, then rename.
+		// Fall back to direct write if the directory is not writable (e.g.
+		// --config points to a writable file in a read-only directory).
+		configDir := filepath.Dir(resolvedConfigPath)
+		atomicTmp, atomicErr := os.CreateTemp(configDir, ".config-*.yaml.tmp")
+		if atomicErr != nil {
+			if !os.IsPermission(atomicErr) {
+				return saveErr(fmt.Errorf("creating temp file for atomic write: %w", atomicErr))
+			}
+			// Directory not writable; fall back to direct write.
+			if err := os.WriteFile(resolvedConfigPath, newData, configMode); err != nil {
+				return saveErr(fmt.Errorf("writing config: %w", err))
+			}
+		} else {
+			atomicTmpPath := atomicTmp.Name()
+			if _, err := atomicTmp.Write(newData); err != nil {
+				atomicTmp.Close()
+				os.Remove(atomicTmpPath)
+				return saveErr(fmt.Errorf("writing config: %w", err))
+			}
+			if err := atomicTmp.Close(); err != nil {
+				os.Remove(atomicTmpPath)
+				return saveErr(fmt.Errorf("writing config: %w", err))
+			}
+			if err := os.Chmod(atomicTmpPath, configMode); err != nil {
+				os.Remove(atomicTmpPath)
+				return saveErr(fmt.Errorf("setting config permissions: %w", err))
+			}
+			if err := os.Rename(atomicTmpPath, resolvedConfigPath); err != nil {
+				os.Remove(atomicTmpPath)
+				return saveErr(fmt.Errorf("writing config: %w", err))
+			}
+		}
+		fmt.Fprintf(deps.Stderr, "Config updated: %s\n", configPath)
+		return nil
+	}
+}
+
 func printConfigUsage(w io.Writer) {
 	fmt.Fprintf(w, `Usage: express-botx config <command> [options]
 
@@ -159,6 +348,7 @@ Commands:
   chat    Manage chat aliases (add, set, rm, list)
   apikey  Manage server API keys (add, rm, list)
   show    Show config file location and summary
+  edit    Open config file in editor for manual editing
 
 Run "express-botx config <command> --help" for details on a specific command.
 `)
@@ -188,6 +378,48 @@ Commands:
 
 Run "express-botx config chat <command> --help" for details on a specific command.
 `)
+}
+
+// splitEditorCmd splits an editor command string into parts, honoring single
+// and double quotes and backslash escapes so that paths with spaces and
+// shell wrappers like `sh -c "vim \"$1\"" sh` work correctly.
+func splitEditorCmd(s string) []string {
+	var parts []string
+	var cur strings.Builder
+	inSingle, inDouble := false, false
+	runes := []rune(s)
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		switch {
+		case r == '\\' && !inSingle && i+1 < len(runes) && isEscapable(runes[i+1]):
+			// Only consume backslash when followed by a character that
+			// needs escaping. This preserves Windows-style paths like
+			// C:\Program Files\... where backslashes are literal.
+			i++
+			cur.WriteRune(runes[i])
+		case r == '\'' && !inDouble:
+			inSingle = !inSingle
+		case r == '"' && !inSingle:
+			inDouble = !inDouble
+		case r == ' ' && !inSingle && !inDouble:
+			if cur.Len() > 0 {
+				parts = append(parts, cur.String())
+				cur.Reset()
+			}
+		default:
+			cur.WriteRune(r)
+		}
+	}
+	if cur.Len() > 0 {
+		parts = append(parts, cur.String())
+	}
+	return parts
+}
+
+// isEscapable returns true for characters that a backslash should escape.
+// Limiting this set preserves literal backslashes in Windows paths.
+func isEscapable(r rune) bool {
+	return r == '\\' || r == '"' || r == '\'' || r == ' '
 }
 
 func printConfigAPIKeyUsage(w io.Writer) {
