@@ -19,6 +19,7 @@ import (
 	"github.com/itchyny/gojq"
 	"github.com/lavr/express-botx/internal/botapi"
 	"github.com/lavr/express-botx/internal/config"
+	"github.com/lavr/express-botx/internal/httputil"
 	vlog "github.com/lavr/express-botx/internal/log"
 	"github.com/lavr/express-botx/internal/token"
 )
@@ -419,7 +420,7 @@ Options:
 
 	vlog.V1("api: %s %s", body.method, req.URL.String())
 
-	client := &http.Client{Timeout: httpTimeout}
+	client := httputil.NewClient(httpTimeout)
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)

@@ -8,6 +8,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/lavr/express-botx/internal/cmd"
+	"github.com/lavr/express-botx/internal/httputil"
 )
 
 // version is set at build time via -ldflags.
@@ -15,6 +16,7 @@ var version = "dev"
 
 func main() {
 	cmd.Version = version
+	httputil.SetVersion(version)
 	deps := cmd.Deps{
 		Stdout:     os.Stdout,
 		Stderr:     os.Stderr,

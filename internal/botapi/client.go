@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lavr/express-botx/internal/httputil"
 	vlog "github.com/lavr/express-botx/internal/log"
 )
 
@@ -29,7 +30,7 @@ func NewClient(host, token string, timeout time.Duration) *Client {
 	return &Client{
 		BaseURL:    ResolveBaseURL(host),
 		Token:      token,
-		HTTPClient: &http.Client{Timeout: timeout},
+		HTTPClient: httputil.NewClient(timeout),
 	}
 }
 

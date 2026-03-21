@@ -8,6 +8,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/lavr/express-botx/internal/httputil"
 )
 
 // Resolve resolves a secret value from one of:
@@ -60,7 +62,8 @@ func resolveVault(spec string) (string, error) {
 	}
 	req.Header.Set("X-Vault-Token", vaultToken)
 
-	resp, err := http.DefaultClient.Do(req)
+	client := httputil.NewClient(10 * time.Second)
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("vault request: %w", err)
 	}

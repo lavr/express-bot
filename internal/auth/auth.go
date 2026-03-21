@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/lavr/express-botx/internal/botapi"
+	"github.com/lavr/express-botx/internal/httputil"
 	vlog "github.com/lavr/express-botx/internal/log"
 )
 
@@ -34,7 +35,7 @@ type tokenResponse struct {
 func GetToken(ctx context.Context, host, botID, signature string, timeout time.Duration) (string, error) {
 	baseURL := botapi.ResolveBaseURL(host)
 	url := fmt.Sprintf("%s/api/v2/botx/bots/%s/token?signature=%s", baseURL, botID, signature)
-	client := &http.Client{Timeout: timeout}
+	client := httputil.NewClient(timeout)
 	return doGetToken(ctx, url, client)
 }
 

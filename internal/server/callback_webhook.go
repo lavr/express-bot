@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/lavr/express-botx/internal/httputil"
 )
 
 // WebhookHandler sends callback events as HTTP POST requests to a configured URL.
@@ -26,7 +28,7 @@ func NewWebhookHandler(url string, timeout time.Duration) *WebhookHandler {
 	return &WebhookHandler{
 		url:     url,
 		timeout: timeout,
-		client:  &http.Client{Timeout: 5 * time.Minute},
+		client:  httputil.NewClient(5 * time.Minute),
 	}
 }
 

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/lavr/express-botx/internal/httputil"
 )
 
 const vaultTimeout = 5 * time.Second
@@ -17,6 +19,8 @@ type VaultCache struct {
 	Path  string // KV path, e.g. "secret/data/express-send/tokens"
 	Token string // Vault token (from VAULT_TOKEN env)
 }
+
+var vaultHTTPClient = httputil.NewClient(vaultTimeout)
 
 func (c *VaultCache) Get(ctx context.Context, key string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, vaultTimeout)
@@ -29,7 +33,7 @@ func (c *VaultCache) Get(ctx context.Context, key string) (string, error) {
 	}
 	req.Header.Set("X-Vault-Token", c.Token)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := vaultHTTPClient.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -84,7 +88,7 @@ func (c *VaultCache) Set(ctx context.Context, key string, token string, ttl time
 	getReq, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err == nil {
 		getReq.Header.Set("X-Vault-Token", c.Token)
-		if resp, err := http.DefaultClient.Do(getReq); err == nil {
+		if resp, err := vaultHTTPClient.Do(getReq); err == nil {
 			defer resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
 				var vaultResp struct {
@@ -119,7 +123,7 @@ func (c *VaultCache) Set(ctx context.Context, key string, token string, ttl time
 	req.Header.Set("X-Vault-Token", c.Token)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := vaultHTTPClient.Do(req)
 	if err != nil {
 		return err
 	}
