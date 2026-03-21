@@ -37,7 +37,7 @@ This function will be used by config edit to validate the edited file. It parses
 **Files:**
 - Modify: `internal/cmd/config.go`
 
-- [ ] Add `runConfigEdit(args []string, deps Deps) error` function:
+- [x] Add `runConfigEdit(args []string, deps Deps) error` function:
   - Parse --config flag via flag.FlagSet (same pattern as runConfigShow)
   - Resolve config path via `config.LoadMinimal(flags)` + `cfg.ConfigPath()`
   - Error if config file does not exist (unlike other commands, edit requires an existing file)
@@ -52,9 +52,9 @@ This function will be used by config edit to validate the edited file. It parses
   - If invalid: print validation error, prompt user: "[r]etry editing / [d]iscard changes? (r/d)" reading from deps.Stdin
   - On retry: loop back to editor with the (invalid) temp file so user can fix
   - On discard: restore original, print "Changes discarded"
-- [ ] Register "edit" case in `runConfig()` switch
-- [ ] Add "edit" to `printConfigUsage()` commands list
-- [ ] Write tests in `internal/cmd/config_test.go`:
+- [x] Register "edit" case in `runConfig()` switch
+- [x] Add "edit" to `printConfigUsage()` commands list
+- [x] Write tests in `internal/cmd/config_test.go`:
   - Config file not found returns error
   - No changes (editor returns same content) prints "no changes"
   - Valid edit writes new content to config file

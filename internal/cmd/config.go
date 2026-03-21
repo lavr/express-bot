@@ -1,10 +1,15 @@
 package cmd
 
 import (
+	"bufio"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 
 	"github.com/lavr/express-botx/internal/config"
 )
@@ -12,7 +17,7 @@ import (
 func runConfig(args []string, deps Deps) error {
 	if len(args) == 0 {
 		printConfigUsage(deps.Stderr)
-		return fmt.Errorf("subcommand required: bot, chat, apikey, show")
+		return fmt.Errorf("subcommand required: bot, chat, apikey, show, edit")
 	}
 
 	switch args[0] {
@@ -24,6 +29,8 @@ func runConfig(args []string, deps Deps) error {
 		return runConfigAPIKey(args[1:], deps)
 	case "show":
 		return runConfigShow(args[1:], deps)
+	case "edit":
+		return runConfigEdit(args[1:], deps)
 	case "--help", "-h":
 		printConfigUsage(deps.Stderr)
 		return nil
@@ -151,6 +158,98 @@ func runConfigShow(args []string, deps Deps) error {
 	}, summary)
 }
 
+func runConfigEdit(args []string, deps Deps) error {
+	fs := flag.NewFlagSet("config edit", flag.ContinueOnError)
+	fs.SetOutput(deps.Stderr)
+	var flags config.Flags
+
+	fs.StringVar(&flags.ConfigPath, "config", "", "path to config file")
+	fs.Usage = func() {
+		fmt.Fprintf(deps.Stderr, "Usage: express-botx config edit [options]\n\nOpen config file in $EDITOR for manual editing.\n\nOptions:\n")
+		fs.PrintDefaults()
+	}
+
+	if err := fs.Parse(reorderArgs(fs, args)); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+
+	cfg, err := config.LoadMinimal(flags)
+	if err != nil {
+		return err
+	}
+
+	configPath := cfg.ConfigPath()
+	if _, err := os.Stat(configPath); err != nil {
+		return fmt.Errorf("config file not found: %s", configPath)
+	}
+
+	original, err := os.ReadFile(configPath)
+	if err != nil {
+		return fmt.Errorf("reading config: %w", err)
+	}
+
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		editor = "vi"
+	}
+
+	tmpDir, err := os.MkdirTemp("", "express-botx-config-*")
+	if err != nil {
+		return fmt.Errorf("creating temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	tmpFile := filepath.Join(tmpDir, "config.yaml")
+	if err := os.WriteFile(tmpFile, original, 0o644); err != nil {
+		return fmt.Errorf("writing temp file: %w", err)
+	}
+
+	for {
+		cmd := exec.Command(editor, tmpFile)
+		cmd.Stdin = deps.Stdin
+		cmd.Stdout = os.Stderr
+		cmd.Stderr = os.Stderr
+
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("editor exited with error: %w", err)
+		}
+
+		newData, err := os.ReadFile(tmpFile)
+		if err != nil {
+			return fmt.Errorf("reading edited file: %w", err)
+		}
+
+		if string(newData) == string(original) {
+			fmt.Fprintln(deps.Stderr, "Edit cancelled, no changes made")
+			return nil
+		}
+
+		if err := config.ValidateConfig(newData); err != nil {
+			fmt.Fprintf(deps.Stderr, "Validation error: %s\n", err)
+			fmt.Fprint(deps.Stderr, "[r]etry editing / [d]iscard changes? (r/d) ")
+
+			reader := bufio.NewReader(deps.Stdin)
+			answer, _ := reader.ReadString('\n')
+			answer = strings.TrimSpace(strings.ToLower(answer))
+
+			if answer == "r" {
+				continue
+			}
+			fmt.Fprintln(deps.Stderr, "Changes discarded")
+			return nil
+		}
+
+		if err := os.WriteFile(configPath, newData, 0o644); err != nil {
+			return fmt.Errorf("writing config: %w", err)
+		}
+		fmt.Fprintf(deps.Stderr, "Config updated: %s\n", configPath)
+		return nil
+	}
+}
+
 func printConfigUsage(w io.Writer) {
 	fmt.Fprintf(w, `Usage: express-botx config <command> [options]
 
@@ -159,6 +258,7 @@ Commands:
   chat    Manage chat aliases (add, set, rm, list)
   apikey  Manage server API keys (add, rm, list)
   show    Show config file location and summary
+  edit    Open config file in editor for manual editing
 
 Run "express-botx config <command> --help" for details on a specific command.
 `)
