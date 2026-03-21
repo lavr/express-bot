@@ -29,8 +29,8 @@ Add `express-botx config edit` command that opens the config file in $EDITOR (fa
 
 This function will be used by config edit to validate the edited file. It parses YAML and runs existing validators without resolving secrets or bot credentials.
 
-- [ ] Add `ValidateConfig(data []byte) error` function that: unmarshals YAML into Config, then calls `validateBotConfigs()`, `ValidateDefaultChat()`, `ValidateChatBots(false)`, and `Callbacks.Validate()` if callbacks are configured
-- [ ] Write tests for ValidateConfig in `internal/config/config_test.go`: valid config, invalid YAML syntax, bot with both secret+token, duplicate default chats, invalid callback rules
+- [x] Add `ValidateConfig(data []byte) error` function that: unmarshals YAML into Config, then calls `validateBotConfigs()`, `ValidateDefaultChat()`, `ValidateChatBots(false)`, and `Callbacks.Validate()` if callbacks are configured
+- [x] Write tests for ValidateConfig in `internal/config/config_test.go`: valid config, invalid YAML syntax, bot with both secret+token, duplicate default chats, invalid callback rules
 
 ### Task 2: Implement config edit command
 

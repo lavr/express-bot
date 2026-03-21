@@ -2091,6 +2091,90 @@ bots:
 	}
 }
 
+func TestValidateConfig_Valid(t *testing.T) {
+	data := []byte(`
+bots:
+  main:
+    host: express.example.com
+    id: bot-123
+    secret: my-secret
+chats:
+  deploy:
+    id: chat-456
+    bot: main
+`)
+	if err := ValidateConfig(data); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateConfig_InvalidYAML(t *testing.T) {
+	data := []byte(`bots: [invalid yaml`)
+	err := ValidateConfig(data)
+	if err == nil {
+		t.Fatal("expected error for invalid YAML")
+	}
+	if !strings.Contains(err.Error(), "invalid YAML") {
+		t.Errorf("error = %q, want it to contain 'invalid YAML'", err)
+	}
+}
+
+func TestValidateConfig_BotWithSecretAndToken(t *testing.T) {
+	data := []byte(`
+bots:
+  main:
+    host: express.example.com
+    id: bot-123
+    secret: my-secret
+    token: my-token
+`)
+	err := ValidateConfig(data)
+	if err == nil {
+		t.Fatal("expected error for bot with both secret and token")
+	}
+	if !strings.Contains(err.Error(), "both secret and token") {
+		t.Errorf("error = %q, want it to contain 'both secret and token'", err)
+	}
+}
+
+func TestValidateConfig_DuplicateDefaultChats(t *testing.T) {
+	data := []byte(`
+chats:
+  deploy:
+    id: chat-1
+    default: true
+  alerts:
+    id: chat-2
+    default: true
+`)
+	err := ValidateConfig(data)
+	if err == nil {
+		t.Fatal("expected error for multiple default chats")
+	}
+	if !strings.Contains(err.Error(), "multiple chats marked as default") {
+		t.Errorf("error = %q, want it to contain 'multiple chats marked as default'", err)
+	}
+}
+
+func TestValidateConfig_InvalidCallbackRules(t *testing.T) {
+	data := []byte(`
+server:
+  callbacks:
+    rules:
+      - events: []
+        handler:
+          type: exec
+          command: /bin/true
+`)
+	err := ValidateConfig(data)
+	if err == nil {
+		t.Fatal("expected error for empty events in callback rule")
+	}
+	if !strings.Contains(err.Error(), "events must not be empty") {
+		t.Errorf("error = %q, want it to contain 'events must not be empty'", err)
+	}
+}
+
 func TestValidateChatBots_WithDuplicateBotIDAlias(t *testing.T) {
 	cfg := &Config{
 		Bots: map[string]BotConfig{

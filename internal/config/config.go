@@ -888,6 +888,31 @@ func (c *CallbacksConfig) Validate() error {
 	return nil
 }
 
+// ValidateConfig parses raw YAML data into a Config and runs structural
+// validation (bot configs, default chat, chat-bot references, callbacks).
+// It does not resolve secrets or bot credentials.
+func ValidateConfig(data []byte) error {
+	var cfg Config
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return fmt.Errorf("invalid YAML: %w", err)
+	}
+	if err := cfg.validateBotConfigs(); err != nil {
+		return err
+	}
+	if err := cfg.ValidateDefaultChat(); err != nil {
+		return err
+	}
+	if err := cfg.ValidateChatBots(false); err != nil {
+		return err
+	}
+	if cfg.Server.Callbacks != nil {
+		if err := cfg.Server.Callbacks.Validate(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // hasCredentials returns true if the config has enough to authenticate.
 func (c *Config) hasCredentials() bool {
 	return c.Host != "" && c.BotID != "" && (c.BotSecret != "" || c.BotToken != "")
