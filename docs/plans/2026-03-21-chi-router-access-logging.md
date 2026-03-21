@@ -38,14 +38,14 @@ Replace the standard `http.ServeMux` with `go-chi/chi` router to get built-in ac
 **Files:**
 - Modify: `internal/server/server.go`
 
-- [ ] Replace `http.NewServeMux()` with `chi.NewRouter()`
-- [ ] Add `middleware.RequestID` as the first middleware in the chi chain (generates X-Request-ID if not present in request, sets response header)
-- [ ] Add `middleware.Logger` as the next middleware for access logging (logs method, path, status, duration to stderr)
-- [ ] Convert route registrations from `mux.HandleFunc("GET /healthz", ...)` / `mux.Handle(pattern, ...)` to chi's `r.Get("/healthz", ...)` / `r.Post(...)` / `r.Route(base, ...)` syntax
-- [ ] Keep existing middleware wrappers (authMiddleware, apm.WrapHandler, errTracker.Middleware, callbackJWTMiddleware) - they return `http.Handler` and work with chi
-- [ ] Ensure errTracker.Middleware wraps the chi router as the outermost handler (same as before)
-- [ ] Update tests in `server_test.go` to work with the chi-based server (doRequest helper uses `srv.srv.Handler.ServeHTTP` which stays the same)
-- [ ] Run `go test ./internal/server/...` - must pass
+- [x] Replace `http.NewServeMux()` with `chi.NewRouter()`
+- [x] Add `middleware.RequestID` as the first middleware in the chi chain (generates X-Request-ID if not present in request, sets response header)
+- [x] Add `middleware.Logger` as the next middleware for access logging (logs method, path, status, duration to stderr)
+- [x] Convert route registrations from `mux.HandleFunc("GET /healthz", ...)` / `mux.Handle(pattern, ...)` to chi's `r.Get("/healthz", ...)` / `r.Post(...)` / `r.Route(base, ...)` syntax
+- [x] Keep existing middleware wrappers (authMiddleware, apm.WrapHandler, errTracker.Middleware, callbackJWTMiddleware) - they return `http.Handler` and work with chi
+- [x] Ensure errTracker.Middleware wraps the chi router as the outermost handler (same as before)
+- [x] Update tests in `server_test.go` to work with the chi-based server (doRequest helper uses `srv.srv.Handler.ServeHTTP` which stays the same)
+- [x] Run `go test ./internal/server/...` - must pass
 
 ### Task 3: Verify acceptance criteria
 

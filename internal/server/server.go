@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	"github.com/lavr/express-botx/internal/apm"
 	"github.com/lavr/express-botx/internal/config"
 	"github.com/lavr/express-botx/internal/errtrack"
@@ -193,22 +195,25 @@ func New(cfg Config, sendFn SendFunc, chatResolver ChatResolver, opts ...Option)
 		s.errTracker = errtrack.New()
 	}
 
-	mux := http.NewServeMux()
+	r := chi.NewRouter()
+	r.Use(middleware.RequestID)
+	r.Use(middleware.Logger)
+
 	base := strings.TrimRight(cfg.BasePath, "/")
 
 	// route registers an authenticated API endpoint with APM tracing.
 	route := func(method, path string, h http.HandlerFunc) {
-		pattern := fmt.Sprintf("%s %s%s", method, base, path)
-		mux.Handle(pattern, s.apm.WrapHandler(method+" "+path, s.authMiddleware(h)))
+		full := base + path
+		r.Method(method, full, s.apm.WrapHandler(method+" "+path, s.authMiddleware(h)))
 	}
 
-	mux.HandleFunc("GET /healthz", s.handleHealthz)
+	r.Get("/healthz", s.handleHealthz)
 
 	if cfg.EnableDocs {
-		mux.Handle("/docs/", http.StripPrefix("/docs", docsHandler(cfg.ExternalURL, cfg.AppVersion)))
-		mux.HandleFunc("GET /docs", func(w http.ResponseWriter, r *http.Request) {
-			http.Redirect(w, r, "/docs/", http.StatusMovedPermanently)
+		r.Get("/docs", func(w http.ResponseWriter, req *http.Request) {
+			http.Redirect(w, req, "/docs/", http.StatusMovedPermanently)
 		})
+		r.Mount("/docs/", http.StripPrefix("/docs", docsHandler(cfg.ExternalURL, cfg.AppVersion)))
 		vlog.Info("server: docs endpoint enabled at /docs/")
 	}
 
@@ -259,13 +264,13 @@ func New(cfg Config, sendFn SendFunc, chatResolver ChatResolver, opts ...Option)
 		cbCommand = callbackJWTMiddleware(cbCommand, s.callbackSecretLookup, verifyJWT)
 		cbNotification = callbackJWTMiddleware(cbNotification, s.callbackSecretLookup, verifyJWT)
 
-		mux.Handle(fmt.Sprintf("POST %s/command", cbBase), s.apm.WrapHandler("POST /command", cbCommand))
-		mux.Handle(fmt.Sprintf("POST %s/notification/callback", cbBase), s.apm.WrapHandler("POST /notification/callback", cbNotification))
+		r.Method("POST", cbBase+"/command", s.apm.WrapHandler("POST /command", cbCommand))
+		r.Method("POST", cbBase+"/notification/callback", s.apm.WrapHandler("POST /notification/callback", cbNotification))
 
 		vlog.Info("server: callback endpoints enabled (base_path: %s, verify_jwt: %v, rules: %d)", cbBase, verifyJWT, len(s.callbacksCfg.Rules))
 	}
 
-	var handler http.Handler = mux
+	var handler http.Handler = r
 	handler = s.errTracker.Middleware(handler)
 
 	s.srv = &http.Server{

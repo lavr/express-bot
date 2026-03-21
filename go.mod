@@ -4,6 +4,8 @@ go 1.25.5
 
 require (
 	github.com/getsentry/sentry-go v0.43.0
+	github.com/go-chi/chi/v5 v5.2.5
+	github.com/itchyny/gojq v0.12.18
 	github.com/mehanizm/iuliia-go v1.0.2
 	github.com/newrelic/go-agent/v3 v3.42.0
 	github.com/rabbitmq/amqp091-go v1.10.0
@@ -18,8 +20,6 @@ require (
 	github.com/armon/go-radix v1.0.0 // indirect
 	github.com/elastic/go-sysinfo v1.7.1 // indirect
 	github.com/elastic/go-windows v1.0.0 // indirect
-	github.com/go-chi/chi/v5 v5.2.5 // indirect
-	github.com/itchyny/gojq v0.12.18 // indirect
 	github.com/itchyny/timefmt-go v0.1.7 // indirect
 	github.com/joeshaw/multierror v0.0.0-20140124173710-69b34d4ec901 // indirect
 	github.com/klauspost/compress v1.15.9 // indirect
