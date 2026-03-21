@@ -211,6 +211,9 @@ func parseTypedValue(val string) (any, error) {
 		if path == "" {
 			return nil, fmt.Errorf("missing file path after @")
 		}
+		if fi, statErr := os.Stat(path); statErr == nil && fi.Size() > maxRequestBodySize {
+			return nil, fmt.Errorf("file %q too large (max 50MB)", path)
+		}
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return nil, fmt.Errorf("reading file %q: %w", path, err)
