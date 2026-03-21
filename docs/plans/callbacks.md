@@ -437,9 +437,9 @@ go run . serve
 
 ### 8.2 Документация конфига
 
-- [ ] Обновить `docs/configuration.md` — секция `server.callbacks`
+- [x] Обновить `docs/configuration.md` — секция `server.callbacks`
   с описанием всех полей и примерами
-- [ ] Обновить `docs/integrations.md` — описание callback-ов
+- [x] Обновить `docs/integrations.md` — описание callback-ов
 
 ```
 # Ручная проверка: прочитать docs/, убедиться в полноте

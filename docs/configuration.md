@@ -229,6 +229,127 @@ express-botx send --no-cache "Hello"
 
 Или в конфиге: `cache.type: none`.
 
+## Callback-ы от Express Platform
+
+Секция `server.callbacks` позволяет принимать callback-и от сервера Express
+(эндпоинты `POST /command` и `POST /notification/callback`) и маршрутизировать
+их на внешние обработчики.
+
+```yaml
+server:
+  callbacks:
+    base_path: /botx            # отдельный base path (по умолчанию = server.base_path)
+    verify_jwt: true            # JWT-верификация включена по умолчанию
+    rules:
+      - events: [chat_created, added_to_chat]
+        async: false            # sync — ждём завершения перед ответом 202
+        verify_jwt: false       # переопределение verify_jwt для правила
+        handler:
+          type: exec
+          command: ./on-membership.sh
+          timeout: 10s
+      - events: [cts_login, cts_logout]
+        async: true             # async — 202 сразу, обработчик в фоне
+        handler:
+          type: webhook
+          url: http://my-service/auth-events
+          timeout: 30s
+      - events: [notification_callback]
+        handler:
+          type: exec
+          command: ./on-delivery.sh
+      - events: ["*"]           # catch-all для остальных событий
+        async: true
+        handler:
+          type: exec
+          command: ./fallback.sh
+```
+
+### Поля `server.callbacks`
+
+| Поле | Тип | По умолчанию | Описание |
+|---|---|---|---|
+| `base_path` | string | `server.base_path` | Базовый путь для callback-эндпоинтов |
+| `verify_jwt` | bool | `true` | JWT-верификация запросов от Express |
+| `rules` | list | `[]` | Список правил маршрутизации |
+
+### Поля правила (`rules[]`)
+
+| Поле | Тип | По умолчанию | Описание |
+|---|---|---|---|
+| `events` | list | (обязательное) | Список типов событий для обработки |
+| `async` | bool | `false` | `true` — ответ 202 сразу, обработка в фоне |
+| `verify_jwt` | bool | наследуется | Переопределение `verify_jwt` для правила |
+| `handler` | object | (обязательное) | Конфигурация обработчика |
+
+### Поля обработчика (`handler`)
+
+| Поле | Тип | Описание |
+|---|---|---|
+| `type` | string | `exec` — запуск команды, `webhook` — HTTP POST |
+| `command` | string | Путь к команде (для `type: exec`) |
+| `url` | string | URL для отправки (для `type: webhook`) |
+| `timeout` | string | Таймаут в формате Go duration (`10s`, `1m`) |
+
+### Типы событий
+
+На `POST /command`:
+
+- `message` — обычное текстовое сообщение
+- `chat_created`, `added_to_chat`, `user_joined_to_chat` — добавление в чат
+- `deleted_from_chat`, `left_from_chat`, `chat_deleted_by_user` — удаление из чата
+- `cts_login`, `cts_logout` — вход/выход пользователя
+- `event_edit` — редактирование сообщения
+- `smartapp_event` — событие SmartApp
+- `internal_bot_notification` — внутреннее уведомление бота
+- `conference_created`, `conference_deleted` — конференции
+- `call_started`, `call_ended` — звонки
+- `*` — catch-all, совпадает с любым событием
+
+На `POST /notification/callback`:
+
+- `notification_callback` — статус доставки уведомления
+
+### Передача данных обработчикам
+
+**exec:**
+- Полный JSON callback-а передаётся через stdin
+- Env-переменные: `EXPRESS_CALLBACK_EVENT`, `EXPRESS_CALLBACK_SYNC_ID`,
+  `EXPRESS_CALLBACK_BOT_ID`, `EXPRESS_CALLBACK_CHAT_ID`, `EXPRESS_CALLBACK_USER_HUID`
+- Exit code 0 = успех, != 0 = ошибка (логируется)
+
+**webhook:**
+- HTTP POST на указанный URL с оригинальным JSON в теле
+- Headers: `Content-Type: application/json`, `X-Express-Event`, `X-Express-Sync-ID`
+- Ожидаемый ответ: HTTP 2xx = успех
+
+### JWT-верификация
+
+По умолчанию включена. Express подписывает запросы JWT-токеном (HS256),
+используя secret бота. Токен передаётся в заголовке `Authorization: Bearer <token>`.
+
+Для отключения верификации (например, в dev-окружении):
+
+```yaml
+server:
+  callbacks:
+    verify_jwt: false
+    rules: [...]
+```
+
+Или для конкретного правила:
+
+```yaml
+rules:
+  - events: [chat_created]
+    verify_jwt: false
+    handler:
+      type: exec
+      command: ./handler.sh
+```
+
+---
+
 ## Конфигурация очереди (async-режим)
 
 Для `enqueue`, `serve --enqueue` и `worker` нужна секция `queue` и, в зависимости от роли, `producer`, `worker` и `catalog`:
