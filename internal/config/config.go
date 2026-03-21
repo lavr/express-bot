@@ -451,6 +451,29 @@ func (c *Config) BotNames() []string {
 	return names
 }
 
+// ConfigForBot returns a copy of this Config resolved for the named bot.
+// The returned config has Host, BotID, BotSecret, BotToken, BotName, BotTimeout
+// set from the bot entry, and inherits Cache, Chats, configPath from the parent.
+func (c *Config) ConfigForBot(name string) (*Config, error) {
+	bot, ok := c.Bots[name]
+	if !ok {
+		return nil, fmt.Errorf("unknown bot %q, available: %s", name, c.botNames())
+	}
+	return &Config{
+		Bots:       c.Bots,
+		Chats:      c.Chats,
+		Cache:      c.Cache,
+		Host:       bot.Host,
+		BotID:      bot.ID,
+		BotSecret:  bot.Secret,
+		BotToken:   bot.Token,
+		BotName:    name,
+		BotTimeout: bot.Timeout,
+		Format:     c.Format,
+		configPath: c.configPath,
+	}, nil
+}
+
 // BotEntry is a bot summary for display (no secrets).
 type BotEntry struct {
 	Name string `json:"name"`

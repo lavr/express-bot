@@ -33,10 +33,10 @@ Add --all / -A flag to bot info, bot ping, bot token, chats list, and chats impo
 
 The --all commands need to iterate bots and create a resolved Config per bot. Add a method that takes a bot name and returns a Config with Host/BotID/BotSecret/BotToken/BotName populated from that bot entry, inheriting Cache and other settings from the parent config.
 
-- [ ] Add `func (c *Config) ConfigForBot(name string) (*Config, error)` that creates a resolved copy of Config for a specific bot (sets Host, BotID, BotSecret, BotToken, BotName, BotTimeout, Cache from the parent)
-- [ ] Add `func (c *Config) BotNames() []string` if not already present (returns sorted bot names for deterministic iteration order)
-- [ ] Write unit tests for ConfigForBot in `internal/config/config_test.go`
-- [ ] Run project test suite - must pass before task 2
+- [x] Add `func (c *Config) ConfigForBot(name string) (*Config, error)` that creates a resolved copy of Config for a specific bot (sets Host, BotID, BotSecret, BotToken, BotName, BotTimeout, Cache from the parent)
+- [x] Add `func (c *Config) BotNames() []string` if not already present (returns sorted bot names for deterministic iteration order)
+- [x] Write unit tests for ConfigForBot in `internal/config/config_test.go`
+- [x] Run project test suite - must pass before task 2
 
 ### Task 2: bot info --all
 
