@@ -187,7 +187,7 @@ func runConfigEdit(args []string, deps Deps) error {
 		}
 		return fmt.Errorf("accessing config file: %w", err)
 	}
-	configMode := info.Mode()
+	configMode := info.Mode().Perm()
 
 	// Resolve symlinks so atomic rename targets the real file, not the symlink.
 	resolvedConfigPath, err := filepath.EvalSymlinks(configPath)
@@ -228,7 +228,10 @@ func runConfigEdit(args []string, deps Deps) error {
 	reader := bufio.NewReader(deps.Stdin)
 
 	for {
-		cmd := exec.Command(editorParts[0], append(editorParts[1:], tmpFile)...)
+		editorArgs := make([]string, len(editorParts)-1, len(editorParts))
+		copy(editorArgs, editorParts[1:])
+		editorArgs = append(editorArgs, tmpFile)
+		cmd := exec.Command(editorParts[0], editorArgs...)
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stderr
 		cmd.Stderr = os.Stderr
@@ -255,9 +258,14 @@ func runConfigEdit(args []string, deps Deps) error {
 			fmt.Fprintf(deps.Stderr, "Validation error: %s\n", err)
 			fmt.Fprint(deps.Stderr, "[r]etry editing / [d]iscard changes? (r/d) ")
 
-			answer, _ := reader.ReadString('\n')
+			answer, readErr := reader.ReadString('\n')
 			answer = strings.TrimSpace(strings.ToLower(answer))
 
+			if readErr != nil && answer == "" {
+				cleanupTmp = false
+				fmt.Fprintf(deps.Stderr, "\nYour edits are preserved at: %s\n", tmpFile)
+				return fmt.Errorf("unable to read user input: %w", readErr)
+			}
 			if answer == "r" {
 				continue
 			}
