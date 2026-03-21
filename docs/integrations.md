@@ -162,6 +162,93 @@ curl -X POST http://localhost:8080/api/v1/grafana \
 
 ---
 
+## Callback-ы от Express Platform
+
+express-botx может принимать callback-и от сервера Express и маршрутизировать
+их на внешние обработчики (скрипты или вебхуки). Это позволяет реагировать на
+системные события (добавление в чат, вход/выход пользователя и др.) без написания
+полноценного бота.
+
+### Настройка express-botx
+
+Добавьте секцию `callbacks` в конфигурацию сервера:
+
+```yaml
+server:
+  listen: ":8080"
+  callbacks:
+    base_path: /botx
+    verify_jwt: true
+    rules:
+      - events: [chat_created, added_to_chat]
+        handler:
+          type: exec
+          command: ./on-membership.sh
+          timeout: 10s
+      - events: [notification_callback]
+        handler:
+          type: exec
+          command: ./on-delivery.sh
+      - events: ["*"]
+        async: true
+        handler:
+          type: webhook
+          url: http://my-service/events
+          timeout: 30s
+```
+
+### Настройка Express Platform
+
+В настройках бота на сервере Express укажите URL callback-а:
+
+- **Command callback URL:** `http://express-botx:8080/botx/command`
+- **Notification callback URL:** `http://express-botx:8080/botx/notification/callback`
+
+### Пример exec-обработчика
+
+```bash
+#!/bin/bash
+# on-membership.sh — обработка добавления в чат
+EVENT="$EXPRESS_CALLBACK_EVENT"
+CHAT_ID="$EXPRESS_CALLBACK_CHAT_ID"
+
+echo "Event: $EVENT, Chat: $CHAT_ID"
+
+# Полный JSON доступен через stdin
+PAYLOAD=$(cat)
+echo "$PAYLOAD" | jq .
+```
+
+### Пример webhook-обработчика
+
+Webhook-обработчик получает POST-запрос с оригинальным JSON callback-а в теле.
+Заголовки `X-Express-Event` и `X-Express-Sync-ID` содержат тип события и sync_id.
+
+```python
+# Flask-пример
+from flask import Flask, request
+app = Flask(__name__)
+
+@app.route("/events", methods=["POST"])
+def handle_event():
+    event = request.headers.get("X-Express-Event")
+    payload = request.get_json()
+    print(f"Event: {event}, Payload: {payload}")
+    return "", 200
+```
+
+### Sync vs Async
+
+- **sync** (`async: false`, по умолчанию) — сервер ждёт завершения обработчика
+  перед ответом клиенту. Подходит для быстрых обработчиков.
+- **async** (`async: true`) — сервер сразу отвечает 202 и запускает обработчик
+  в фоне. Подходит для долгих операций. При graceful shutdown сервер дожидается
+  завершения фоновых обработчиков.
+
+Подробнее о полях конфигурации — см. [Конфигурация](configuration.md#callback-ы-от-express-platform).
+
+---
+
 ## Произвольные вебхуки через /send
 
 Для систем без специальных эндпоинтов используйте `/send`:

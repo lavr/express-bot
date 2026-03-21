@@ -2168,3 +2168,185 @@ func TestSend_AsyncMode_CatalogMode_ChatIDOnly(t *testing.T) {
 		t.Fatalf("expected request to pass validation, got 400: %s", w.Body.String())
 	}
 }
+
+// --- callback endpoint registration ---
+
+func TestServerWithCallbacksEndpointsRegistered(t *testing.T) {
+	handler := &recordingHandler{}
+	verifyJWT := false
+	cfg := config.CallbacksConfig{
+		VerifyJWT: &verifyJWT,
+		Rules: []config.CallbackRule{
+			{
+				Events:  []string{"message"},
+				Handler: config.CallbackHandlerConfig{Type: "recording"},
+			},
+		},
+	}
+
+	srv := newTestServerWithOpts(nil,
+		WithCallbacks(cfg, WithCallbackHandler(handler)),
+	)
+
+	// POST /api/v1/command should reach the handleCommand handler (no auth needed).
+	body := `{"sync_id":"s1","command":{"body":"hello"},"from":{"group_chat_id":"g1"},"bot_id":"b1"}`
+	w := doRequest(srv, "POST", "/api/v1/command", strings.NewReader(body), nil)
+	if w.Code != 202 {
+		t.Fatalf("expected 202 for /command, got %d: %s", w.Code, w.Body.String())
+	}
+	if handler.callCount() != 1 {
+		t.Fatalf("expected 1 handler call, got %d", handler.callCount())
+	}
+
+	// POST /api/v1/notification/callback should reach handleNotificationCallback.
+	handler2 := &recordingHandler{}
+	verifyJWT2 := false
+	cfg2 := config.CallbacksConfig{
+		VerifyJWT: &verifyJWT2,
+		Rules: []config.CallbackRule{
+			{
+				Events:  []string{"notification_callback"},
+				Handler: config.CallbackHandlerConfig{Type: "recording"},
+			},
+		},
+	}
+	srv2 := newTestServerWithOpts(nil,
+		WithCallbacks(cfg2, WithCallbackHandler(handler2)),
+	)
+
+	body2 := `{"sync_id":"n1","status":"ok"}`
+	w2 := doRequest(srv2, "POST", "/api/v1/notification/callback", strings.NewReader(body2), nil)
+	if w2.Code != 200 {
+		t.Fatalf("expected 200 for /notification/callback, got %d: %s", w2.Code, w2.Body.String())
+	}
+	if handler2.callCount() != 1 {
+		t.Fatalf("expected 1 handler call, got %d", handler2.callCount())
+	}
+}
+
+func TestServerWithCallbacksCustomBasePath(t *testing.T) {
+	handler := &recordingHandler{}
+	verifyJWT := false
+	cfg := config.CallbacksConfig{
+		BasePath:  "/botx",
+		VerifyJWT: &verifyJWT,
+		Rules: []config.CallbackRule{
+			{
+				Events:  []string{"message"},
+				Handler: config.CallbackHandlerConfig{Type: "recording"},
+			},
+		},
+	}
+
+	srv := newTestServerWithOpts(nil,
+		WithCallbacks(cfg, WithCallbackHandler(handler)),
+	)
+
+	// Should be registered at /botx/command, not /api/v1/command.
+	body := `{"sync_id":"s1","command":{"body":"hello"},"from":{"group_chat_id":"g1"},"bot_id":"b1"}`
+	w := doRequest(srv, "POST", "/botx/command", strings.NewReader(body), nil)
+	if w.Code != 202 {
+		t.Fatalf("expected 202 for /botx/command, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// /api/v1/command should NOT match callback endpoints.
+	w2 := doRequest(srv, "POST", "/api/v1/command", strings.NewReader(body), nil)
+	if w2.Code == 202 {
+		t.Fatal("expected /api/v1/command to NOT be a callback endpoint when custom base_path is set")
+	}
+}
+
+func TestServerWithCallbacksJWTEnabled(t *testing.T) {
+	handler := &recordingHandler{}
+	verifyJWT := true
+	cfg := config.CallbacksConfig{
+		VerifyJWT: &verifyJWT,
+		Rules: []config.CallbackRule{
+			{
+				Events:  []string{"message"},
+				Handler: config.CallbackHandlerConfig{Type: "recording"},
+			},
+		},
+	}
+
+	srv := newTestServerWithOpts(nil,
+		WithCallbacks(cfg, WithCallbackHandler(handler)),
+	)
+
+	// Without Authorization header, should get 401.
+	body := `{"sync_id":"s1","command":{"body":"hello"},"from":{"group_chat_id":"g1"},"bot_id":"b1"}`
+	w := doRequest(srv, "POST", "/api/v1/command", strings.NewReader(body), nil)
+	if w.Code != 401 {
+		t.Fatalf("expected 401 without JWT, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Handler should not have been called.
+	if handler.callCount() != 0 {
+		t.Fatalf("expected 0 handler calls with failed JWT, got %d", handler.callCount())
+	}
+}
+
+func TestServerWithCallbacksJWTDisabled(t *testing.T) {
+	handler := &recordingHandler{}
+	verifyJWT := false
+	cfg := config.CallbacksConfig{
+		VerifyJWT: &verifyJWT,
+		Rules: []config.CallbackRule{
+			{
+				Events:  []string{"message"},
+				Handler: config.CallbackHandlerConfig{Type: "recording"},
+			},
+		},
+	}
+
+	srv := newTestServerWithOpts(nil,
+		WithCallbacks(cfg, WithCallbackHandler(handler)),
+	)
+
+	// With verify_jwt: false, should work without Authorization header.
+	body := `{"sync_id":"s1","command":{"body":"hello"},"from":{"group_chat_id":"g1"},"bot_id":"b1"}`
+	w := doRequest(srv, "POST", "/api/v1/command", strings.NewReader(body), nil)
+	if w.Code != 202 {
+		t.Fatalf("expected 202 with JWT disabled, got %d: %s", w.Code, w.Body.String())
+	}
+	if handler.callCount() != 1 {
+		t.Fatalf("expected 1 handler call, got %d", handler.callCount())
+	}
+}
+
+func TestServerWithoutCallbacksNoEndpoints(t *testing.T) {
+	// Server without WithCallbacks should not have callback endpoints.
+	srv := newTestServer([]ResolvedKey{{Name: "test", Key: "k"}})
+
+	body := `{"sync_id":"s1","command":{"body":"hello"},"from":{"group_chat_id":"g1"},"bot_id":"b1"}`
+	w := doRequest(srv, "POST", "/api/v1/command", strings.NewReader(body), map[string]string{
+		"X-API-Key": "k",
+	})
+	// Should get 405 or 404, not 202 (no callback handler registered).
+	if w.Code == 202 {
+		t.Fatal("expected /command endpoint to NOT exist without WithCallbacks")
+	}
+}
+
+func TestServerWithCallbacksJWTDefaultEnabled(t *testing.T) {
+	// When VerifyJWT is nil (default), JWT should be enabled.
+	handler := &recordingHandler{}
+	cfg := config.CallbacksConfig{
+		Rules: []config.CallbackRule{
+			{
+				Events:  []string{"message"},
+				Handler: config.CallbackHandlerConfig{Type: "recording"},
+			},
+		},
+	}
+
+	srv := newTestServerWithOpts(nil,
+		WithCallbacks(cfg, WithCallbackHandler(handler)),
+	)
+
+	body := `{"sync_id":"s1","command":{"body":"hello"},"from":{"group_chat_id":"g1"},"bot_id":"b1"}`
+	w := doRequest(srv, "POST", "/api/v1/command", strings.NewReader(body), nil)
+	if w.Code != 401 {
+		t.Fatalf("expected 401 with default JWT enabled, got %d: %s", w.Code, w.Body.String())
+	}
+}

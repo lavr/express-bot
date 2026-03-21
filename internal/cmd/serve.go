@@ -272,6 +272,50 @@ Options:
 		srvOpts = append(srvOpts, server.WithGrafana(grCfg))
 	}
 
+	// Callback endpoints
+	if cb := cfg.Server.Callbacks; cb != nil && len(cb.Rules) > 0 {
+		if err := cb.Validate(); err != nil {
+			return fmt.Errorf("callbacks config: %w", err)
+		}
+		// Validate handler types supported by CLI (library users may register custom types).
+		for i, rule := range cb.Rules {
+			switch rule.Handler.Type {
+			case "exec", "webhook":
+				// ok
+			default:
+				return fmt.Errorf("callbacks rule #%d: unsupported handler type %q (supported: exec, webhook)", i+1, rule.Handler.Type)
+			}
+		}
+		// Verify that bot secrets are available when JWT verification is enabled.
+		verifyJWT := cb.VerifyJWT == nil || *cb.VerifyJWT
+		if verifyJWT {
+			hasSecret := false
+			if cfg.IsMultiBot() {
+				for name, bot := range cfg.Bots {
+					if bot.Secret != "" {
+						hasSecret = true
+					} else {
+						vlog.V1("callbacks: bot %q has no secret configured; JWT verification will fail for callbacks from this bot", name)
+					}
+				}
+			} else {
+				hasSecret = cfg.BotSecret != ""
+			}
+			if !hasSecret {
+				return fmt.Errorf("callbacks config: verify_jwt is enabled but no bot secret configured; set verify_jwt: false or configure bot secrets")
+			}
+		}
+		var cbOpts []server.CallbackOption
+		if verifyJWT {
+			secretLookup, err := buildBotSecretLookup(cfg)
+			if err != nil {
+				return fmt.Errorf("callbacks secret lookup: %w", err)
+			}
+			cbOpts = append(cbOpts, server.WithCallbackSecretLookup(secretLookup))
+		}
+		srvOpts = append(srvOpts, server.WithCallbacks(*cb, cbOpts...))
+	}
+
 	srv := server.New(srvCfg, sendFn, chatResolver, srvOpts...)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -468,6 +512,49 @@ type sendResponseJSON struct {
 	SyncID string `json:"sync_id,omitempty"`
 }
 
+
+// buildBotSecretLookup resolves bot secrets at startup and returns a lookup function.
+// Secrets are cached to avoid repeated Vault/env lookups on every JWT verification.
+func buildBotSecretLookup(cfg *config.Config) (func(botID string) (string, error), error) {
+	cache := make(map[string]string)
+
+	if cfg.IsMultiBot() {
+		for _, bot := range cfg.Bots {
+			if bot.ID == "" || bot.Secret == "" {
+				continue
+			}
+			resolved, err := secret.Resolve(bot.Secret)
+			if err != nil {
+				return nil, fmt.Errorf("resolving secret for bot %s: %w", bot.ID, err)
+			}
+			cache[bot.ID] = resolved
+		}
+		return func(botID string) (string, error) {
+			s, ok := cache[botID]
+			if !ok {
+				return "", fmt.Errorf("unknown bot_id %s", botID)
+			}
+			return s, nil
+		}, nil
+	}
+
+	// Single-bot mode
+	if cfg.BotSecret == "" {
+		return func(botID string) (string, error) {
+			return "", fmt.Errorf("bot %s has no secret configured", botID)
+		}, nil
+	}
+	resolved, err := secret.Resolve(cfg.BotSecret)
+	if err != nil {
+		return nil, fmt.Errorf("resolving bot secret: %w", err)
+	}
+	return func(botID string) (string, error) {
+		if cfg.BotID != botID {
+			return "", fmt.Errorf("unknown bot_id %s", botID)
+		}
+		return resolved, nil
+	}, nil
+}
 
 // runtimeBotEntries returns bot entries reflecting the actual runtime state.
 // In multi-bot mode, returns all configured bots.

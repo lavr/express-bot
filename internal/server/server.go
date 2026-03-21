@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lavr/express-botx/internal/apm"
@@ -48,9 +49,15 @@ type Server struct {
 	errTracker errtrack.Tracker
 	botEntries  []config.BotEntry  // for GET /bot/list
 	chatEntries []config.ChatEntry // for GET /chats/alias/list
-	amCfg       *AlertmanagerConfig
-	grCfg       *GrafanaConfig
-	srv         *http.Server
+	amCfg          *AlertmanagerConfig
+	grCfg          *GrafanaConfig
+	callbackRouter       *CallbackRouter
+	callbacksCfg         *config.CallbacksConfig
+	callbackSecretLookup func(botID string) (string, error)
+	callbackWG           sync.WaitGroup    // tracks in-flight async callback handlers
+	callbackCtx          context.Context    // cancelled on shutdown to signal async handlers
+	callbackCancel       context.CancelFunc // cancels callbackCtx
+	srv                  *http.Server
 }
 
 // SendFunc sends a message via the BotX API. The server calls this for each request.
@@ -96,14 +103,79 @@ func WithErrTracker(t errtrack.Tracker) Option {
 	}
 }
 
+// CallbackOption configures callback handling.
+type CallbackOption func(*callbackOptions)
+
+type callbackOptions struct {
+	customHandlers map[string]CallbackHandler
+	secretLookup   func(botID string) (string, error)
+}
+
+// WithCallbackHandler registers a custom CallbackHandler that can be referenced
+// by its Type() name in callback rules. Custom handlers take precedence over
+// the built-in exec and webhook handlers.
+func WithCallbackHandler(handler CallbackHandler) CallbackOption {
+	return func(o *callbackOptions) {
+		if o.customHandlers == nil {
+			o.customHandlers = make(map[string]CallbackHandler)
+		}
+		o.customHandlers[handler.Type()] = handler
+	}
+}
+
+// WithCallbackSecretLookup sets the function used to look up bot secrets for JWT
+// verification in callback endpoints. Required when verify_jwt is enabled.
+func WithCallbackSecretLookup(fn func(botID string) (string, error)) CallbackOption {
+	return func(o *callbackOptions) {
+		o.secretLookup = fn
+	}
+}
+
+// WithCallbacks enables callback endpoints (POST /command and POST /notification/callback).
+// It creates a CallbackRouter from the config rules and registers handlers.
+func WithCallbacks(cfg config.CallbacksConfig, opts ...CallbackOption) Option {
+	return func(s *Server) {
+		co := &callbackOptions{}
+		for _, o := range opts {
+			o(co)
+		}
+
+		handlers, err := buildHandlers(cfg.Rules, co.customHandlers)
+		if err != nil {
+			vlog.Info("server: failed to build callback handlers: %v", err)
+			return
+		}
+
+		events := make([][]string, len(cfg.Rules))
+		asyncFlags := make([]bool, len(cfg.Rules))
+		for i, rule := range cfg.Rules {
+			events[i] = rule.Events
+			asyncFlags[i] = rule.Async
+		}
+
+		router, err := NewCallbackRouter(events, asyncFlags, handlers)
+		if err != nil {
+			vlog.Info("server: failed to create callback router: %v", err)
+			return
+		}
+
+		s.callbackRouter = router
+		s.callbacksCfg = &cfg
+		s.callbackSecretLookup = co.secretLookup
+	}
+}
+
 // New creates a Server with the given configuration.
 func New(cfg Config, sendFn SendFunc, chatResolver ChatResolver, opts ...Option) *Server {
+	cbCtx, cbCancel := context.WithCancel(context.Background())
 	s := &Server{
-		cfg:        cfg,
-		send:       sendFn,
-		chats:      chatResolver,
-		keyMap:     make(map[string]string, len(cfg.Keys)),
-		botNameSet: make(map[string]bool, len(cfg.BotNames)),
+		cfg:            cfg,
+		send:           sendFn,
+		chats:          chatResolver,
+		keyMap:         make(map[string]string, len(cfg.Keys)),
+		botNameSet:     make(map[string]bool, len(cfg.BotNames)),
+		callbackCtx:    cbCtx,
+		callbackCancel: cbCancel,
 	}
 	for _, k := range cfg.Keys {
 		s.keyMap[k.Key] = k.Name
@@ -172,6 +244,29 @@ func New(cfg Config, sendFn SendFunc, chatResolver ChatResolver, opts ...Option)
 			chatInfo = "from ?chat_id param"
 		}
 		vlog.Info("server: grafana endpoint enabled (chat: %s)", chatInfo)
+	}
+
+	if s.callbackRouter != nil && s.callbacksCfg != nil {
+		cbBase := strings.TrimRight(s.callbacksCfg.BasePath, "/")
+		if cbBase == "" {
+			cbBase = base
+		}
+
+		verifyJWT := true
+		if s.callbacksCfg.VerifyJWT != nil {
+			verifyJWT = *s.callbacksCfg.VerifyJWT
+		}
+
+		cbCommand := http.Handler(http.HandlerFunc(s.handleCommand))
+		cbNotification := http.Handler(http.HandlerFunc(s.handleNotificationCallback))
+
+		cbCommand = callbackJWTMiddleware(cbCommand, s.callbackSecretLookup, verifyJWT)
+		cbNotification = callbackJWTMiddleware(cbNotification, s.callbackSecretLookup, verifyJWT)
+
+		mux.Handle(fmt.Sprintf("POST %s/command", cbBase), s.apm.WrapHandler("POST /command", cbCommand))
+		mux.Handle(fmt.Sprintf("POST %s/notification/callback", cbBase), s.apm.WrapHandler("POST /notification/callback", cbNotification))
+
+		vlog.Info("server: callback endpoints enabled (base_path: %s, verify_jwt: %v, rules: %d)", cbBase, verifyJWT, len(s.callbacksCfg.Rules))
 	}
 
 	var handler http.Handler = mux
@@ -244,6 +339,8 @@ func (s *Server) resolveRequestBot(ctx context.Context, requestBot, chatBot stri
 
 // Run starts the server and blocks until ctx is cancelled. It performs graceful shutdown.
 func (s *Server) Run(ctx context.Context) error {
+	defer s.callbackCancel()
+
 	errCh := make(chan error, 1)
 	go func() {
 		vlog.Info("server: listening on %s (base_path: %s)", s.cfg.Listen, s.cfg.BasePath)
@@ -265,7 +362,34 @@ func (s *Server) Run(ctx context.Context) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	vlog.Info("server: shutting down...")
-	return s.srv.Shutdown(shutdownCtx)
+
+	// Stop accepting new connections first.
+	var shutdownErr error
+	if err := s.srv.Shutdown(shutdownCtx); err != nil {
+		vlog.V1("server: HTTP shutdown error: %v", err)
+		shutdownErr = err
+	}
+
+	// Signal async callback handlers to stop.
+	s.callbackCancel()
+
+	// Wait for in-flight async callback handlers to finish (bounded by shutdownCtx).
+	done := make(chan struct{})
+	go func() {
+		s.callbackWG.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		vlog.V2("server: all async callback handlers finished")
+	case <-shutdownCtx.Done():
+		vlog.V1("server: timeout waiting for async callback handlers")
+		if shutdownErr == nil {
+			shutdownErr = fmt.Errorf("server: timeout waiting for async callback handlers")
+		}
+	}
+
+	return shutdownErr
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {

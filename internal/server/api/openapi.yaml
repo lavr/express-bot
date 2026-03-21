@@ -305,6 +305,109 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /command:
+    post:
+      operationId: command
+      summary: BotX command callback
+      description: |
+        Receives command callbacks from the eXpress BotX platform.
+        Parses the event type from the command body, routes to matching handler rules,
+        and responds with 202 Accepted.
+
+        This endpoint is registered only when `server.callbacks` is configured.
+        Authentication uses JWT signed by the bot secret (Authorization: Bearer <jwt>),
+        controlled by the `verify_jwt` setting.
+
+        Event types are derived from the `command.body` field:
+        - `system:chat_created` → `chat_created`
+        - `system:added_to_chat` → `added_to_chat`
+        - Plain text → `message`
+        - etc.
+      security:
+        - callbackJWT: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CallbackPayload"
+            example:
+              sync_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+              command:
+                body: "system:chat_created"
+                command_type: "system"
+                data: {}
+              from:
+                user_huid: "f16cdc5f-6366-5552-9ecd-c36290ab3d11"
+                group_chat_id: "30dc1980-643a-00ad-3c67-d5071b13e0d7"
+                chat_type: "group_chat"
+                host: "express.company.ru"
+              bot_id: "054af49e-5e18-4dca-ad73-4f96b6de63fa"
+              proto_version: 4
+      responses:
+        "202":
+          description: Callback accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CallbackAcceptedResponse"
+        "400":
+          description: Invalid request (malformed JSON)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: JWT verification failed or missing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /notification/callback:
+    post:
+      operationId: notificationCallback
+      summary: BotX notification callback
+      description: |
+        Receives delivery status callbacks from the eXpress BotX platform.
+        Routes as `notification_callback` event to matching handler rules
+        and responds with 200 OK.
+
+        This endpoint is registered only when `server.callbacks` is configured.
+        Authentication uses JWT signed by the bot secret (Authorization: Bearer <jwt>),
+        controlled by the `verify_jwt` setting.
+      security:
+        - callbackJWT: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NotificationCallbackPayload"
+            example:
+              sync_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+              status: "ok"
+              result: {}
+      responses:
+        "200":
+          description: Callback processed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CallbackOkResponse"
+        "400":
+          description: Invalid request (malformed JSON)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: JWT verification failed or missing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /grafana:
     post:
       operationId: grafana
@@ -415,6 +518,10 @@ components:
       in: header
       name: X-Bot-Signature
       description: HMAC-SHA256 signature for bot secret auth
+    callbackJWT:
+      type: http
+      scheme: bearer
+      description: "JWT signed with bot secret (HS256). Used for callback endpoints from eXpress platform."
 
   schemas:
     SendRequest:
@@ -664,6 +771,140 @@ components:
           type: string
           description: Default bot for this chat (empty if not bound)
           example: deploy-bot
+
+    CallbackPayload:
+      type: object
+      description: BotX API v4 POST /command request body
+      required: [sync_id, command, from, bot_id]
+      properties:
+        sync_id:
+          type: string
+          format: uuid
+          description: Unique request identifier
+          example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        command:
+          $ref: "#/components/schemas/CallbackCommand"
+        from:
+          $ref: "#/components/schemas/CallbackFrom"
+        bot_id:
+          type: string
+          format: uuid
+          description: Bot identifier
+          example: "054af49e-5e18-4dca-ad73-4f96b6de63fa"
+        proto_version:
+          type: integer
+          description: Protocol version
+          example: 4
+        attachments:
+          type: array
+          description: Message attachments
+          items:
+            type: object
+        async_files:
+          type: array
+          description: Metadata for asynchronously loaded files
+          items:
+            type: object
+        entities:
+          type: array
+          description: Message entities (mentions, markup, etc.)
+          items:
+            type: object
+
+    CallbackCommand:
+      type: object
+      description: Command part of a callback payload
+      required: [body]
+      properties:
+        body:
+          type: string
+          description: |
+            Command body text. System events use "system:" prefix
+            (e.g. "system:chat_created"). Plain text means a regular message.
+          example: "system:chat_created"
+        command_type:
+          type: string
+          description: Command type identifier
+          example: "system"
+        data:
+          type: object
+          description: Additional command data
+        metadata:
+          type: object
+          description: Command metadata
+
+    CallbackFrom:
+      type: object
+      description: Sender information in a callback payload
+      required: [group_chat_id]
+      properties:
+        user_huid:
+          type: string
+          format: uuid
+          description: User HUID (may be empty for system events)
+          example: "f16cdc5f-6366-5552-9ecd-c36290ab3d11"
+        group_chat_id:
+          type: string
+          format: uuid
+          description: Chat identifier
+          example: "30dc1980-643a-00ad-3c67-d5071b13e0d7"
+        chat_type:
+          type: string
+          description: Chat type
+          example: "group_chat"
+        host:
+          type: string
+          description: eXpress server host
+          example: "express.company.ru"
+        ad_chat:
+          type: boolean
+          description: Whether the chat is from Active Directory
+        ad_group:
+          type: boolean
+          description: Whether the group is from Active Directory
+
+    NotificationCallbackPayload:
+      type: object
+      description: BotX API v4 POST /notification/callback request body
+      required: [sync_id, status]
+      properties:
+        sync_id:
+          type: string
+          format: uuid
+          description: Sync ID of the original notification
+          example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        status:
+          type: string
+          description: Delivery status
+          example: "ok"
+        result:
+          type: object
+          description: Delivery result data
+        reason:
+          type: string
+          description: Reason for failure (if status is not ok)
+        errors:
+          type: array
+          description: List of errors
+          items:
+            type: object
+        error_data:
+          type: object
+          description: Additional error details
+
+    CallbackAcceptedResponse:
+      type: object
+      properties:
+        result:
+          type: string
+          example: "accepted"
+
+    CallbackOkResponse:
+      type: object
+      properties:
+        result:
+          type: string
+          example: "ok"
 
     ErrorResponse:
       type: object
