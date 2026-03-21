@@ -427,9 +427,9 @@ func TestSlugify(t *testing.T) {
 		{"", ""},
 	}
 	for _, tt := range tests {
-		got := slugify(tt.input)
+		got := slugifyChatAlias(tt.input)
 		if got != tt.want {
-			t.Errorf("slugify(%q) = %q, want %q", tt.input, got, tt.want)
+			t.Errorf("slugifyChatAlias(%q) = %q, want %q", tt.input, got, tt.want)
 		}
 	}
 }
@@ -935,7 +935,13 @@ bots:
 `)
 	deps, stdout, _ := testDeps()
 	// Will fail at API call but should parse -A flag
-	_ = runChatsList([]string{"--config", cfgPath, "-A"}, deps)
+	err := runChatsList([]string{"--config", cfgPath, "-A"}, deps)
+	if err == nil {
+		t.Fatal("expected error (no real API server)")
+	}
+	if !strings.Contains(err.Error(), "one or more bots failed") {
+		t.Errorf("expected 'one or more bots failed' error, got: %v", err)
+	}
 	out := stdout.String()
 	if !strings.Contains(out, "only:") {
 		t.Errorf("expected bot name in output (via -A shorthand), got: %s", out)

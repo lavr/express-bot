@@ -70,6 +70,7 @@ type chatsListEntry struct {
 	Name        string `json:"name"`
 	ChatType    string `json:"chat_type"`
 	Members     int    `json:"members"`
+	Error       string `json:"error,omitempty"`
 }
 
 func runChatsList(args []string, deps Deps) error {
@@ -162,7 +163,7 @@ func runChatsListAll(flags config.Flags, deps Deps) error {
 			anyFailed = true
 			entries = append(entries, chatsListEntry{
 				BotName: name,
-				Name:    fmt.Sprintf("ERROR: %s", err.Error()),
+				Error:   err.Error(),
 			})
 			continue
 		}
@@ -172,7 +173,7 @@ func runChatsListAll(flags config.Flags, deps Deps) error {
 			anyFailed = true
 			entries = append(entries, chatsListEntry{
 				BotName: name,
-				Name:    fmt.Sprintf("ERROR: %s", authErr.Error()),
+				Error:   authErr.Error(),
 			})
 			continue
 		}
@@ -183,7 +184,7 @@ func runChatsListAll(flags config.Flags, deps Deps) error {
 			anyFailed = true
 			entries = append(entries, chatsListEntry{
 				BotName: name,
-				Name:    fmt.Sprintf("ERROR: %s", apiErr.Error()),
+				Error:   apiErr.Error(),
 			})
 			continue
 		}
@@ -214,8 +215,8 @@ func runChatsListAll(flags config.Flags, deps Deps) error {
 				fmt.Fprintf(deps.Stdout, "%s:\n", e.BotName)
 				currentBot = e.BotName
 			}
-			if strings.HasPrefix(e.Name, "ERROR: ") {
-				fmt.Fprintf(deps.Stdout, "  %s\n", e.Name)
+			if e.Error != "" {
+				fmt.Fprintf(deps.Stdout, "  ERROR: %s\n", e.Error)
 				continue
 			}
 			fmt.Fprintf(deps.Stdout, "  %-36s  %-20s  %s  (%d members)\n",
@@ -669,14 +670,11 @@ func runChatsImportAll(flags config.Flags, resolvedType, prefix string, dryRun, 
 		return fmt.Errorf("no bots configured")
 	}
 
-	// Load save config once for all bots.
-	saveCfg, err := config.LoadMinimal(flags)
-	if err != nil {
-		return err
+	// Use cfg for saving — same minimal config used for iteration.
+	if cfg.Chats == nil {
+		cfg.Chats = make(map[string]config.ChatConfig)
 	}
-	if saveCfg.Chats == nil {
-		saveCfg.Chats = make(map[string]config.ChatConfig)
-	}
+	saveCfg := cfg
 
 	result := chatImportResult{DryRun: dryRun}
 	generatedAliases := make(map[string]struct{})
@@ -1058,10 +1056,6 @@ func generateChatAlias(name, uuid, prefix string, taken map[string]struct{}) str
 			return candidate
 		}
 	}
-}
-
-func slugify(name string) string {
-	return slugifyChatAlias(name)
 }
 
 func slugifyChatAlias(name string) string {

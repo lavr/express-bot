@@ -600,22 +600,18 @@ func runBotToken(args []string, deps Deps) error {
 	if err != nil {
 		return err
 	}
+	if err := cfg.ValidateFormat(); err != nil {
+		return err
+	}
 
 	tok, _, err := authenticate(cfg)
 	if err != nil {
 		return err
 	}
 
-	if flags.Format == "json" || cfg.Format == "json" {
-		format := flags.Format
-		if format == "" {
-			format = cfg.Format
-		}
-		return printOutput(deps.Stdout, format, nil, botTokenResult{Token: tok})
-	}
-
-	fmt.Fprintln(deps.Stdout, tok)
-	return nil
+	return printOutput(deps.Stdout, cfg.Format, func() {
+		fmt.Fprintln(deps.Stdout, tok)
+	}, botTokenResult{Token: tok})
 }
 
 func runBotTokenAll(flags config.Flags, deps Deps) error {

@@ -36,6 +36,7 @@
 --config        путь к файлу конфигурации
 --no-cache      отключить кэширование токена
 --format        формат вывода: text или json (по умолчанию: text)
+--all / -A      итерировать все боты из конфига (bot ping/info/token, chats list, config chat import)
 -v / -vv / -vvv уровень подробности логирования
 ```
 
