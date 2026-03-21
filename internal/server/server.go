@@ -51,6 +51,7 @@ type Server struct {
 	amCfg          *AlertmanagerConfig
 	grCfg          *GrafanaConfig
 	callbackRouter *CallbackRouter
+	callbacksCfg   *config.CallbacksConfig
 	srv            *http.Server
 }
 
@@ -94,6 +95,58 @@ func WithAPM(p apm.Provider) Option {
 func WithErrTracker(t errtrack.Tracker) Option {
 	return func(s *Server) {
 		s.errTracker = t
+	}
+}
+
+// CallbackOption configures callback handling.
+type CallbackOption func(*callbackOptions)
+
+type callbackOptions struct {
+	customHandlers map[string]CallbackHandler
+}
+
+// WithCallbackHandler registers a custom CallbackHandler that can be referenced
+// by its Type() name in callback rules. Custom handlers take precedence over
+// the built-in exec and webhook handlers.
+func WithCallbackHandler(handler CallbackHandler) CallbackOption {
+	return func(o *callbackOptions) {
+		if o.customHandlers == nil {
+			o.customHandlers = make(map[string]CallbackHandler)
+		}
+		o.customHandlers[handler.Type()] = handler
+	}
+}
+
+// WithCallbacks enables callback endpoints (POST /command and POST /notification/callback).
+// It creates a CallbackRouter from the config rules and registers handlers.
+func WithCallbacks(cfg config.CallbacksConfig, opts ...CallbackOption) Option {
+	return func(s *Server) {
+		co := &callbackOptions{}
+		for _, o := range opts {
+			o(co)
+		}
+
+		handlers, err := buildHandlers(cfg.Rules, co.customHandlers)
+		if err != nil {
+			vlog.V1("server: failed to build callback handlers: %v", err)
+			return
+		}
+
+		events := make([][]string, len(cfg.Rules))
+		asyncFlags := make([]bool, len(cfg.Rules))
+		for i, rule := range cfg.Rules {
+			events[i] = rule.Events
+			asyncFlags[i] = rule.Async
+		}
+
+		router, err := NewCallbackRouter(events, asyncFlags, handlers)
+		if err != nil {
+			vlog.V1("server: failed to create callback router: %v", err)
+			return
+		}
+
+		s.callbackRouter = router
+		s.callbacksCfg = &cfg
 	}
 }
 

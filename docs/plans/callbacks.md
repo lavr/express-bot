@@ -354,9 +354,9 @@ go test ./internal/server/ -run TestHandleCommandNoRules -v
 
 ### 6.1 Server Option — WithCallbacks
 
-- [ ] В `server.go` добавить `WithCallbacks(cfg CallbacksConfig, opts ...CallbackOption) Option`
-- [ ] `CallbackOption` тип: `WithCallbackHandler(handler CallbackHandler)`
-- [ ] При вызове: создать router, зарегистрировать handlers
+- [x] В `server.go` добавить `WithCallbacks(cfg CallbacksConfig, opts ...CallbackOption) Option`
+- [x] `CallbackOption` тип: `WithCallbackHandler(handler CallbackHandler)`
+- [x] При вызове: создать router, зарегистрировать handlers
 
 ```
 go build ./internal/server/
