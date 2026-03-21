@@ -3,7 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -208,9 +208,9 @@ func New(cfg Config, sendFn SendFunc, chatResolver ChatResolver, opts ...Option)
 			next.ServeHTTP(w, req)
 		})
 	})
-	r.Use(middleware.RequestLogger(
-		&middleware.DefaultLogFormatter{Logger: log.New(os.Stderr, "", log.LstdFlags), NoColor: true},
-	))
+	r.Use(middleware.RequestLogger(&slogLogFormatter{
+		logger: slog.New(slog.NewJSONHandler(os.Stderr, nil)),
+	}))
 
 	base := strings.TrimRight(cfg.BasePath, "/")
 
