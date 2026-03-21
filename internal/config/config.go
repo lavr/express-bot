@@ -782,7 +782,10 @@ func LoadMinimal(flags Flags) (*Config, error) {
 		vlog.V2("config: %s not found, using defaults", configPath)
 	}
 
-	// Apply only format flag for LoadMinimal
+	// Apply format and no-cache flags for LoadMinimal
+	if flags.NoCache {
+		cfg.Cache.Type = "none"
+	}
 	if flags.Format != "" {
 		cfg.Format = flags.Format
 	}

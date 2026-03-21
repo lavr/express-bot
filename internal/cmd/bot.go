@@ -347,9 +347,16 @@ func runBotInfoAll(flags config.Flags, showToken bool, deps Deps) error {
 	}
 
 	printErr := printOutput(deps.Stdout, cfg.Format, func() {
-		fmt.Fprintf(deps.Stdout, "%-20s %-30s %-36s %-10s %s\n", "NAME", "HOST", "BOT ID", "CACHE", "AUTH")
-		for _, r := range results {
-			fmt.Fprintf(deps.Stdout, "%-20s %-30s %-36s %-10s %s\n", r.Name, r.Host, r.BotID, r.CacheMode, r.AuthStatus)
+		if showToken {
+			fmt.Fprintf(deps.Stdout, "%-20s %-30s %-36s %-10s %-10s %s\n", "NAME", "HOST", "BOT ID", "CACHE", "AUTH", "TOKEN")
+			for _, r := range results {
+				fmt.Fprintf(deps.Stdout, "%-20s %-30s %-36s %-10s %-10s %s\n", r.Name, r.Host, r.BotID, r.CacheMode, r.AuthStatus, r.Token)
+			}
+		} else {
+			fmt.Fprintf(deps.Stdout, "%-20s %-30s %-36s %-10s %s\n", "NAME", "HOST", "BOT ID", "CACHE", "AUTH")
+			for _, r := range results {
+				fmt.Fprintf(deps.Stdout, "%-20s %-30s %-36s %-10s %s\n", r.Name, r.Host, r.BotID, r.CacheMode, r.AuthStatus)
+			}
 		}
 	}, results)
 	if printErr != nil {
