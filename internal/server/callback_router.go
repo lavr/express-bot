@@ -45,3 +45,21 @@ func NewCallbackRouter(events [][]string, asyncFlags []bool, handlers map[int]Ca
 
 	return &CallbackRouter{rules: rules}, nil
 }
+
+// Route returns all rules that match the given event, in declaration order.
+// A rule matches if its events list contains the exact event name or the wildcard "*".
+func (r *CallbackRouter) Route(event string) []matchedRule {
+	var matched []matchedRule
+	for _, rule := range r.rules {
+		for _, e := range rule.events {
+			if e == event || e == "*" {
+				matched = append(matched, matchedRule{
+					handler: rule.handler,
+					async:   rule.async,
+				})
+				break
+			}
+		}
+	}
+	return matched
+}
