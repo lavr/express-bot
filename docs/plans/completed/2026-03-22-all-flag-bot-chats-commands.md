@@ -105,14 +105,14 @@ The --all commands need to iterate bots and create a resolved Config per bot. Ad
 - Modify: `internal/cmd/chats.go`
 - Modify: `internal/cmd/chats_test.go`
 
-- [ ] Add --all / -A bool flag to runChatsImport
-- [ ] When --all is set: use LoadMinimal, iterate bots, authenticate each, fetch chats, apply import logic per bot (with --dry-run, --only-type, --prefix, --skip-existing, --overwrite all respected)
-- [ ] Chat aliases must include bot name to avoid cross-bot collisions (e.g. "botname-chatname" or use --prefix per bot)
-- [ ] Bind imported chats to their source bot via the bot field in ChatConfig
-- [ ] Text/JSON output: aggregated results with bot_name in added/skipped items
-- [ ] Non-zero exit code if any bot failed
-- [ ] Write tests for --all chats import (dry-run, skip-existing, multi-bot)
-- [ ] Run project test suite - must pass before task 7
+- [x] Add --all / -A bool flag to runChatsImport
+- [x] When --all is set: use LoadMinimal, iterate bots, authenticate each, fetch chats, apply import logic per bot (with --dry-run, --only-type, --prefix, --skip-existing, --overwrite all respected)
+- [x] Chat aliases must include bot name to avoid cross-bot collisions (e.g. "botname-chatname" or use --prefix per bot)
+- [x] Bind imported chats to their source bot via the bot field in ChatConfig
+- [x] Text/JSON output: aggregated results with bot_name in added/skipped items
+- [x] Non-zero exit code if any bot failed
+- [x] Write tests for --all chats import (dry-run, skip-existing, multi-bot)
+- [x] Run project test suite - must pass before task 7
 
 ### Task 7: Verify acceptance criteria
 

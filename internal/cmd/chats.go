@@ -20,11 +20,12 @@ const (
 )
 
 type importedChat struct {
-	Alias  string `json:"alias"`
-	ID     string `json:"id"`
-	Name   string `json:"name,omitempty"`
-	Type   string `json:"type,omitempty"`
-	Reason string `json:"reason,omitempty"`
+	BotName string `json:"bot_name,omitempty"`
+	Alias   string `json:"alias"`
+	ID      string `json:"id"`
+	Name    string `json:"name,omitempty"`
+	Type    string `json:"type,omitempty"`
+	Reason  string `json:"reason,omitempty"`
 }
 
 type chatImportResult struct {
@@ -470,6 +471,7 @@ func runChatsImport(args []string, deps Deps) error {
 	fs.SetOutput(deps.Stderr)
 	var flags config.Flags
 	var (
+		all          bool
 		dryRun       bool
 		onlyType     string
 		prefix       string
@@ -478,6 +480,8 @@ func runChatsImport(args []string, deps Deps) error {
 	)
 
 	globalFlags(fs, &flags)
+	fs.BoolVar(&all, "all", false, "import chats for all configured bots")
+	fs.BoolVar(&all, "A", false, "import chats for all configured bots (shorthand)")
 	fs.BoolVar(&dryRun, "dry-run", false, "show planned changes without writing config")
 	fs.StringVar(&onlyType, "only-type", "", "import only chats of this type: group_chat or voex_call")
 	fs.StringVar(&prefix, "prefix", "", "prefix for generated aliases")
@@ -505,6 +509,10 @@ func runChatsImport(args []string, deps Deps) error {
 	resolvedType, err := resolveImportChatType(onlyType)
 	if err != nil {
 		return err
+	}
+
+	if all {
+		return runChatsImportAll(flags, resolvedType, prefix, dryRun, skipExisting, overwrite, deps)
 	}
 
 	cfg, err := config.Load(flags)
@@ -641,6 +649,194 @@ func runChatsImport(args []string, deps Deps) error {
 			}
 		}
 	}, result)
+}
+
+func runChatsImportAll(flags config.Flags, resolvedType, prefix string, dryRun, skipExisting, overwrite bool, deps Deps) error {
+	if perBotFlagsSet(flags) {
+		return fmt.Errorf("--all is mutually exclusive with --bot, --host, --bot-id, --secret, --token")
+	}
+
+	cfg, err := config.LoadMinimal(flags)
+	if err != nil {
+		return err
+	}
+	if err := cfg.ValidateFormat(); err != nil {
+		return err
+	}
+
+	names := cfg.BotNames()
+	if len(names) == 0 {
+		return fmt.Errorf("no bots configured")
+	}
+
+	// Load save config once for all bots.
+	saveCfg, err := config.LoadMinimal(flags)
+	if err != nil {
+		return err
+	}
+	if saveCfg.Chats == nil {
+		saveCfg.Chats = make(map[string]config.ChatConfig)
+	}
+
+	result := chatImportResult{DryRun: dryRun}
+	generatedAliases := make(map[string]struct{})
+	idIndex := buildChatIDIndex(saveCfg.Chats)
+	var anyFailed bool
+
+	for _, name := range names {
+		botCfg, err := cfg.ConfigForBot(name)
+		if err != nil {
+			anyFailed = true
+			result.Skipped = append(result.Skipped, importedChat{
+				BotName: name,
+				Reason:  fmt.Sprintf("config error: %s", err.Error()),
+			})
+			continue
+		}
+
+		tok, _, authErr := authenticate(botCfg)
+		if authErr != nil {
+			anyFailed = true
+			result.Skipped = append(result.Skipped, importedChat{
+				BotName: name,
+				Reason:  fmt.Sprintf("auth error: %s", authErr.Error()),
+			})
+			continue
+		}
+
+		client := botapi.NewClient(botCfg.Host, tok, botCfg.HTTPTimeout())
+		chats, apiErr := client.ListChats(context.Background())
+		if apiErr != nil {
+			anyFailed = true
+			result.Skipped = append(result.Skipped, importedChat{
+				BotName: name,
+				Reason:  fmt.Sprintf("API error: %s", apiErr.Error()),
+			})
+			continue
+		}
+
+		// Use bot name as prefix to avoid cross-bot alias collisions.
+		botPrefix := name
+		if prefix != "" {
+			botPrefix = prefix + "-" + name
+		}
+
+		for _, chat := range importableChats(chats, resolvedType) {
+			if existingAlias, ok := idIndex[chat.GroupChatID]; ok {
+				reason := "already exists"
+				if existingAlias != "" {
+					reason = fmt.Sprintf("already exists as %s", existingAlias)
+				}
+				result.Skipped = append(result.Skipped, importedChat{
+					BotName: name,
+					Alias:   existingAlias,
+					ID:      chat.GroupChatID,
+					Name:    chat.Name,
+					Type:    chat.ChatType,
+					Reason:  reason,
+				})
+				continue
+			}
+
+			alias := generateChatAlias(chat.Name, chat.GroupChatID, botPrefix, generatedAliases)
+			existing, exists := saveCfg.Chats[alias]
+			if exists {
+				if existing.ID == chat.GroupChatID {
+					result.Skipped = append(result.Skipped, importedChat{
+						BotName: name,
+						Alias:   alias,
+						ID:      chat.GroupChatID,
+						Name:    chat.Name,
+						Type:    chat.ChatType,
+						Reason:  "already exists",
+					})
+					continue
+				}
+				if skipExisting {
+					result.Skipped = append(result.Skipped, importedChat{
+						BotName: name,
+						Alias:   alias,
+						ID:      chat.GroupChatID,
+						Name:    chat.Name,
+						Type:    chat.ChatType,
+						Reason:  fmt.Sprintf("alias conflict with %s", existing.ID),
+					})
+					continue
+				}
+				if !overwrite {
+					return fmt.Errorf("alias %q already points to %s, use --skip-existing or --overwrite", alias, existing.ID)
+				}
+
+				updated := existing
+				updated.ID = chat.GroupChatID
+				updated.Bot = name
+				saveCfg.Chats[alias] = updated
+				delete(idIndex, existing.ID)
+				idIndex[chat.GroupChatID] = alias
+				generatedAliases[alias] = struct{}{}
+				result.Added = append(result.Added, importedChat{
+					BotName: name,
+					Alias:   alias,
+					ID:      chat.GroupChatID,
+					Name:    chat.Name,
+					Type:    chat.ChatType,
+				})
+				continue
+			}
+
+			saveCfg.Chats[alias] = config.ChatConfig{ID: chat.GroupChatID, Bot: name}
+			generatedAliases[alias] = struct{}{}
+			idIndex[chat.GroupChatID] = alias
+			result.Added = append(result.Added, importedChat{
+				BotName: name,
+				Alias:   alias,
+				ID:      chat.GroupChatID,
+				Name:    chat.Name,
+				Type:    chat.ChatType,
+			})
+		}
+	}
+
+	if !dryRun && len(result.Added) > 0 {
+		if err := saveCfg.SaveConfig(); err != nil {
+			return err
+		}
+	}
+
+	printErr := printOutput(deps.Stdout, saveCfg.Format, func() {
+		fmt.Fprintf(deps.Stdout, "Imported chats: %d\n", len(result.Added))
+		fmt.Fprintf(deps.Stdout, "Skipped chats: %d\n", len(result.Skipped))
+		if len(result.Added) > 0 {
+			fmt.Fprintln(deps.Stdout)
+			fmt.Fprintln(deps.Stdout, "Added:")
+			for _, item := range result.Added {
+				fmt.Fprintf(deps.Stdout, "  %-20s %-20s %s", item.BotName, item.Alias, item.ID)
+				if item.Name != "" {
+					fmt.Fprintf(deps.Stdout, "  (%s)", item.Name)
+				}
+				fmt.Fprintln(deps.Stdout)
+			}
+		}
+		if len(result.Skipped) > 0 {
+			fmt.Fprintln(deps.Stdout)
+			fmt.Fprintln(deps.Stdout, "Skipped:")
+			for _, item := range result.Skipped {
+				if item.Alias != "" {
+					fmt.Fprintf(deps.Stdout, "  %-20s %-20s %s  %s\n", item.BotName, item.Alias, item.ID, item.Reason)
+				} else {
+					fmt.Fprintf(deps.Stdout, "  %-20s %s\n", item.BotName, item.Reason)
+				}
+			}
+		}
+	}, result)
+	if printErr != nil {
+		return printErr
+	}
+
+	if anyFailed {
+		return fmt.Errorf("one or more bots failed")
+	}
+	return nil
 }
 
 func runChatsAdd(args []string, deps Deps) error {
