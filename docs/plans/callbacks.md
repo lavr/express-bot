@@ -387,10 +387,10 @@ go build ./... && go run . serve --help
 
 ### 6.4 Bot secret lookup для JWT
 
-- [ ] Функция `botSecretLookup` в serve.go — ищет secret по bot_id
+- [x] Функция `botSecretLookup` в serve.go — ищет secret по bot_id
   среди сконфигурированных ботов
-- [ ] Single-bot: один secret; multi-bot: lookup по bot_id
-- [ ] Ошибка если bot_id неизвестен
+- [x] Single-bot: один secret; multi-bot: lookup по bot_id
+- [x] Ошибка если bot_id неизвестен
 
 ```
 go test ./internal/cmd/ -run TestBotSecretLookup -v

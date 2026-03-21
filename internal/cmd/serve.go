@@ -492,7 +492,7 @@ type sendResponseJSON struct {
 // Used for JWT verification in callback endpoints.
 func buildBotSecretLookup(cfg *config.Config) func(botID string) (string, error) {
 	return func(botID string) (string, error) {
-		if cfg.IsMultiBot() {
+		if len(cfg.Bots) > 0 {
 			for _, bot := range cfg.Bots {
 				if bot.ID == botID {
 					if bot.Secret == "" {
