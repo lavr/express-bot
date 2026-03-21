@@ -68,5 +68,5 @@ This function will be used by config edit to validate the edited file. It parses
 
 ### Task 4: Update documentation
 
-- [ ] Update `docs/commands.md` with config edit command
-- [ ] Move this plan to `docs/plans/completed/`
+- [x] Update `docs/commands.md` with config edit command
+- [x] Move this plan to `docs/plans/completed/`
