@@ -105,6 +105,41 @@ func TestHealthz(t *testing.T) {
 	}
 }
 
+// --- HEAD support (middleware.GetHead) ---
+
+func TestHEAD_Healthz(t *testing.T) {
+	srv := newTestServer([]ResolvedKey{{Name: "test", Key: "key1"}})
+	w := doRequest(srv, "HEAD", "/healthz", nil, nil)
+
+	// Without middleware.GetHead this would return 405.
+	if w.Code != 200 {
+		t.Fatalf("HEAD /healthz: expected 200, got %d", w.Code)
+	}
+}
+
+func TestHEAD_AuthenticatedRoute(t *testing.T) {
+	srv := newTestServer([]ResolvedKey{{Name: "test", Key: "key1"}})
+	w := doRequest(srv, "HEAD", "/api/v1/bot/list", nil, map[string]string{"X-API-Key": "key1"})
+
+	// Without middleware.GetHead this would return 405.
+	if w.Code != 200 {
+		t.Fatalf("HEAD /api/v1/bot/list: expected 200, got %d", w.Code)
+	}
+}
+
+func TestHEAD_Docs(t *testing.T) {
+	srv := newTestServer([]ResolvedKey{{Name: "t", Key: "k"}}, func(c *Config) {
+		c.EnableDocs = true
+	})
+
+	w := doRequest(srv, "HEAD", "/docs/", nil, nil)
+	// The mounted stdlib ServeMux already handles HEAD for GET routes,
+	// so this works independently of middleware.GetHead.
+	if w.Code != 200 {
+		t.Fatalf("HEAD /docs/: expected 200, got %d", w.Code)
+	}
+}
+
 // --- auth ---
 
 func TestAuth_BearerToken(t *testing.T) {

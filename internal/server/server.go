@@ -198,6 +198,7 @@ func New(cfg Config, sendFn SendFunc, chatResolver ChatResolver, opts ...Option)
 	}
 
 	r := chi.NewRouter()
+	r.Use(middleware.GetHead)
 	r.Use(middleware.RequestID)
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
