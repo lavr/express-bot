@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
@@ -341,6 +343,170 @@ func TestJWTClaims(t *testing.T) {
 			t.Fatalf("expected token with exp=now to be valid, got: %v", err)
 		}
 	})
+}
+
+func TestJWTMiddleware(t *testing.T) {
+	const botID = "bot-123"
+	const secret = "my-secret-key"
+
+	lookup := func(id string) (string, error) {
+		if id == botID {
+			return secret, nil
+		}
+		return "", fmt.Errorf("unknown bot: %s", id)
+	}
+
+	okHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"ok":true}`))
+	})
+
+	validToken := func() string {
+		now := time.Now().Unix()
+		return makeJWT(
+			map[string]any{"alg": "HS256", "typ": "JWT"},
+			map[string]any{"aud": botID, "exp": now + 3600},
+			secret,
+		)
+	}
+
+	t.Run("verify disabled passes through", func(t *testing.T) {
+		mw := callbackJWTMiddleware(okHandler, lookup, false)
+		req := httptest.NewRequest("POST", "/command", nil)
+		rec := httptest.NewRecorder()
+		mw.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+	})
+
+	t.Run("verify disabled passes without auth header", func(t *testing.T) {
+		mw := callbackJWTMiddleware(okHandler, lookup, false)
+		req := httptest.NewRequest("POST", "/command", nil)
+		rec := httptest.NewRecorder()
+		mw.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+	})
+
+	t.Run("missing authorization header returns 401", func(t *testing.T) {
+		mw := callbackJWTMiddleware(okHandler, lookup, true)
+		req := httptest.NewRequest("POST", "/command", nil)
+		rec := httptest.NewRecorder()
+		mw.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("expected 401, got %d", rec.Code)
+		}
+		assertJSONError(t, rec, "missing Authorization header")
+	})
+
+	t.Run("non-bearer scheme returns 401", func(t *testing.T) {
+		mw := callbackJWTMiddleware(okHandler, lookup, true)
+		req := httptest.NewRequest("POST", "/command", nil)
+		req.Header.Set("Authorization", "Basic abc123")
+		rec := httptest.NewRecorder()
+		mw.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("expected 401, got %d", rec.Code)
+		}
+		assertJSONError(t, rec, "Bearer scheme")
+	})
+
+	t.Run("empty bearer token returns 401", func(t *testing.T) {
+		mw := callbackJWTMiddleware(okHandler, lookup, true)
+		req := httptest.NewRequest("POST", "/command", nil)
+		req.Header.Set("Authorization", "Bearer ")
+		rec := httptest.NewRecorder()
+		mw.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("expected 401, got %d", rec.Code)
+		}
+		assertJSONError(t, rec, "empty Bearer token")
+	})
+
+	t.Run("invalid JWT returns 401", func(t *testing.T) {
+		mw := callbackJWTMiddleware(okHandler, lookup, true)
+		req := httptest.NewRequest("POST", "/command", nil)
+		req.Header.Set("Authorization", "Bearer not-a-jwt")
+		rec := httptest.NewRecorder()
+		mw.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("expected 401, got %d", rec.Code)
+		}
+		assertJSONError(t, rec, "JWT verification failed")
+	})
+
+	t.Run("expired JWT returns 401", func(t *testing.T) {
+		token := makeJWT(
+			map[string]any{"alg": "HS256"},
+			map[string]any{"aud": botID, "exp": time.Now().Unix() - 3600},
+			secret,
+		)
+		mw := callbackJWTMiddleware(okHandler, lookup, true)
+		req := httptest.NewRequest("POST", "/command", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		mw.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("expected 401, got %d", rec.Code)
+		}
+		assertJSONError(t, rec, "expired")
+	})
+
+	t.Run("valid JWT passes through", func(t *testing.T) {
+		mw := callbackJWTMiddleware(okHandler, lookup, true)
+		req := httptest.NewRequest("POST", "/command", nil)
+		req.Header.Set("Authorization", "Bearer "+validToken())
+		rec := httptest.NewRecorder()
+		mw.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+	})
+
+	t.Run("wrong signature returns 401", func(t *testing.T) {
+		token := makeJWT(
+			map[string]any{"alg": "HS256"},
+			map[string]any{"aud": botID},
+			"wrong-secret",
+		)
+		mw := callbackJWTMiddleware(okHandler, lookup, true)
+		req := httptest.NewRequest("POST", "/command", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		mw.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("expected 401, got %d", rec.Code)
+		}
+		assertJSONError(t, rec, "JWT verification failed")
+	})
+
+	t.Run("response has JSON content type", func(t *testing.T) {
+		mw := callbackJWTMiddleware(okHandler, lookup, true)
+		req := httptest.NewRequest("POST", "/command", nil)
+		rec := httptest.NewRecorder()
+		mw.ServeHTTP(rec, req)
+		ct := rec.Header().Get("Content-Type")
+		if ct != "application/json" {
+			t.Fatalf("expected application/json, got %s", ct)
+		}
+	})
+}
+
+func assertJSONError(t *testing.T, rec *httptest.ResponseRecorder, substr string) {
+	t.Helper()
+	var resp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("response is not valid JSON: %v", err)
+	}
+	errMsg, _ := resp["error"].(string)
+	if !contains(errMsg, substr) {
+		t.Fatalf("expected error containing %q, got %q", substr, errMsg)
+	}
+	if ok, _ := resp["ok"].(bool); ok {
+		t.Fatal("expected ok=false in error response")
+	}
 }
 
 func contains(s, substr string) bool {

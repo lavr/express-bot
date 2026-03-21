@@ -7,8 +7,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
+
+	vlog "github.com/lavr/express-botx/internal/log"
 )
 
 var (
@@ -110,4 +113,52 @@ func verifyCallbackJWT(tokenString string, secretLookup func(botID string) (stri
 	}
 
 	return &claims, nil
+}
+
+// callbackJWTMiddleware wraps an http.Handler with JWT verification for BotX callbacks.
+// When verifyEnabled is false, the middleware passes requests through without checking.
+// When verification fails, it responds with HTTP 401 and a JSON error body.
+func callbackJWTMiddleware(h http.Handler, secretLookup func(botID string) (string, error), verifyEnabled bool) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !verifyEnabled {
+			h.ServeHTTP(w, r)
+			return
+		}
+
+		auth := r.Header.Get("Authorization")
+		if auth == "" {
+			writeJWTError(w, "missing Authorization header")
+			return
+		}
+
+		if !strings.HasPrefix(auth, "Bearer ") {
+			writeJWTError(w, "Authorization header must use Bearer scheme")
+			return
+		}
+
+		token := strings.TrimPrefix(auth, "Bearer ")
+		if token == "" {
+			writeJWTError(w, "empty Bearer token")
+			return
+		}
+
+		_, err := verifyCallbackJWT(token, secretLookup)
+		if err != nil {
+			vlog.Info("server: callback JWT verification failed: %v", err)
+			writeJWTError(w, fmt.Sprintf("JWT verification failed: %v", err))
+			return
+		}
+
+		h.ServeHTTP(w, r)
+	})
+}
+
+// writeJWTError writes a 401 JSON error response for JWT verification failures.
+func writeJWTError(w http.ResponseWriter, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusUnauthorized)
+	json.NewEncoder(w).Encode(map[string]any{
+		"ok":    false,
+		"error": msg,
+	})
 }

@@ -293,10 +293,10 @@ go test ./internal/server/ -run TestJWTClaims -v
 
 ### 4.3 JWT middleware
 
-- [ ] `callbackJWTMiddleware(h http.Handler, secretLookup, verifyEnabled bool) http.Handler`
-- [ ] Извлечение `Authorization: Bearer <token>` из заголовка
-- [ ] При `verify_jwt: false` — пропускать проверку
-- [ ] При ошибке — HTTP 401 с JSON-ответом
+- [x] `callbackJWTMiddleware(h http.Handler, secretLookup, verifyEnabled bool) http.Handler`
+- [x] Извлечение `Authorization: Bearer <token>` из заголовка
+- [x] При `verify_jwt: false` — пропускать проверку
+- [x] При ошибке — HTTP 401 с JSON-ответом
 
 ```
 go test ./internal/server/ -run TestJWTMiddleware -v
