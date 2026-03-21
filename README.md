@@ -73,7 +73,7 @@ express-botx api -X POST /api/v3/botx/chats/create -f name=test -f chat_type=gro
 express-botx api /api/v3/botx/chats/list -q '.result[].name'
 ```
 
-Подробнее: [docs/commands.md](docs/commands.md#api)
+Больше примеров: [examples/scripts/api-command.sh](examples/scripts/api-command.sh) | Подробнее: [docs/commands.md](docs/commands.md#api)
 
 ### HTTP-сервер (serve)
 
