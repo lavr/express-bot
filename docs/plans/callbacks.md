@@ -308,11 +308,11 @@ go test ./internal/server/ -run TestJWTMiddleware -v
 
 ### 5.1 handleCommand — POST /command
 
-- [ ] Создать `internal/server/handler_callback.go`
-- [ ] Парсинг JSON body → `CallbackPayload`
-- [ ] Определение типа события через `parseEventType`
-- [ ] Маршрутизация через `CallbackRouter.Route(event)`
-- [ ] Ответ `{"result": "accepted"}` с кодом 202
+- [x] Создать `internal/server/handler_callback.go`
+- [x] Парсинг JSON body → `CallbackPayload`
+- [x] Определение типа события через `parseEventType`
+- [x] Маршрутизация через `CallbackRouter.Route(event)`
+- [x] Ответ `{"result": "accepted"}` с кодом 202
 
 ```
 go test ./internal/server/ -run TestHandleCommand -v

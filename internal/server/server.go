@@ -48,9 +48,10 @@ type Server struct {
 	errTracker errtrack.Tracker
 	botEntries  []config.BotEntry  // for GET /bot/list
 	chatEntries []config.ChatEntry // for GET /chats/alias/list
-	amCfg       *AlertmanagerConfig
-	grCfg       *GrafanaConfig
-	srv         *http.Server
+	amCfg          *AlertmanagerConfig
+	grCfg          *GrafanaConfig
+	callbackRouter *CallbackRouter
+	srv            *http.Server
 }
 
 // SendFunc sends a message via the BotX API. The server calls this for each request.
