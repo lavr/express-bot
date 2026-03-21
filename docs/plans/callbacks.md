@@ -271,10 +271,10 @@ go test ./internal/server/ -run TestBuildHandlers -v
 
 ### 4.1 JWT парсинг и проверка подписи
 
-- [ ] Создать `internal/server/callback_jwt.go`
-- [ ] Функция `verifyCallbackJWT(tokenString string, secretLookup func(botID string) (string, error)) error`
-- [ ] Парсинг JWT, проверка алгоритма = HS256
-- [ ] Проверка подписи через bot secret (lookup по `aud` claim)
+- [x] Создать `internal/server/callback_jwt.go`
+- [x] Функция `verifyCallbackJWT(tokenString string, secretLookup func(botID string) (string, error)) error`
+- [x] Парсинг JWT, проверка алгоритма = HS256
+- [x] Проверка подписи через bot secret (lookup по `aud` claim)
 
 ```
 go test ./internal/server/ -run TestVerifyCallbackJWT -v
