@@ -2175,6 +2175,26 @@ server:
 	}
 }
 
+func TestValidateConfig_EmptyData(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		data []byte
+	}{
+		{"empty", []byte("")},
+		{"whitespace", []byte("  \n\t\n  ")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateConfig(tc.data)
+			if err == nil {
+				t.Fatal("expected error for empty config")
+			}
+			if !strings.Contains(err.Error(), "empty") {
+				t.Errorf("error = %q, want it to contain 'empty'", err)
+			}
+		})
+	}
+}
+
 func TestValidateChatBots_WithDuplicateBotIDAlias(t *testing.T) {
 	cfg := &Config{
 		Bots: map[string]BotConfig{

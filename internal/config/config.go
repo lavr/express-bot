@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -899,6 +900,9 @@ func (c *CallbacksConfig) Validate() error {
 // validation (bot configs, default chat, chat-bot references, callbacks).
 // It does not resolve secrets or bot credentials.
 func ValidateConfig(data []byte) error {
+	if len(bytes.TrimSpace(data)) == 0 {
+		return fmt.Errorf("config file is empty")
+	}
 	var cfg Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return fmt.Errorf("invalid YAML: %w", err)
