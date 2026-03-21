@@ -126,9 +126,9 @@ func TestConfigEdit_InvalidYAML_Discard(t *testing.T) {
 	}
 }
 
-func TestConfigEdit_EditorFromEnv(t *testing.T) {
+func TestConfigEdit_EditorFailure(t *testing.T) {
 	configPath := writeTestConfig(t, testConfigYAML)
-	t.Setenv("EDITOR", "true")
+	t.Setenv("EDITOR", "false")
 
 	var stderr bytes.Buffer
 	deps := Deps{
@@ -139,10 +139,67 @@ func TestConfigEdit_EditorFromEnv(t *testing.T) {
 	}
 
 	err := runConfigEdit([]string{"--config", configPath}, deps)
+	if err == nil {
+		t.Fatal("expected error when editor exits with non-zero status")
+	}
+	if !strings.Contains(err.Error(), "editor exited with error") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestConfigEdit_InvalidYAML_Retry(t *testing.T) {
+	configPath := writeTestConfig(t, testConfigYAML)
+
+	newContent := `bots:
+  retried:
+    host: express.example.com
+    id: bot-123
+    secret: env:BOT_SECRET
+`
+
+	scriptDir := t.TempDir()
+	scriptPath := filepath.Join(scriptDir, "editor.sh")
+	stateFile := filepath.Join(scriptDir, "state")
+
+	// First invocation writes invalid YAML, second writes valid YAML
+	script := `#!/bin/sh
+if [ ! -f "` + stateFile + `" ]; then
+  echo 'invalid: yaml: [broken' > "$1"
+  touch "` + stateFile + `"
+else
+  cat > "$1" << 'ENDOFCONTENT'
+` + newContent + `ENDOFCONTENT
+fi
+`
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("EDITOR", scriptPath)
+
+	var stderr bytes.Buffer
+	deps := Deps{
+		Stdout:     &bytes.Buffer{},
+		Stderr:     &stderr,
+		Stdin:      strings.NewReader("r\n"),
+		IsTerminal: false,
+	}
+
+	err := runConfigEdit([]string{"--config", configPath}, deps)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(stderr.String(), "no changes") {
-		t.Fatalf("expected 'no changes' message, got: %s", stderr.String())
+	if !strings.Contains(stderr.String(), "Validation error") {
+		t.Fatalf("expected 'Validation error' message, got: %s", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "Config updated") {
+		t.Fatalf("expected 'Config updated' message, got: %s", stderr.String())
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "retried") {
+		t.Fatalf("config file was not updated after retry, content: %s", string(data))
 	}
 }

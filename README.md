@@ -130,6 +130,7 @@ express-botx config bot add --name prod --host express.company.ru --bot-id UUID 
 express-botx config chat add --chat-id UUID --alias deploy --bot prod
 express-botx config apikey add --name app1
 express-botx config show
+express-botx config edit
 ```
 
 Полный список команд: [docs/commands.md](docs/commands.md)

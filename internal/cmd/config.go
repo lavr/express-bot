@@ -182,9 +182,11 @@ func runConfigEdit(args []string, deps Deps) error {
 	}
 
 	configPath := cfg.ConfigPath()
-	if _, err := os.Stat(configPath); err != nil {
+	info, err := os.Stat(configPath)
+	if err != nil {
 		return fmt.Errorf("config file not found: %s", configPath)
 	}
+	configMode := info.Mode()
 
 	original, err := os.ReadFile(configPath)
 	if err != nil {
@@ -203,13 +205,15 @@ func runConfigEdit(args []string, deps Deps) error {
 	defer os.RemoveAll(tmpDir)
 
 	tmpFile := filepath.Join(tmpDir, "config.yaml")
-	if err := os.WriteFile(tmpFile, original, 0o644); err != nil {
+	if err := os.WriteFile(tmpFile, original, 0o600); err != nil {
 		return fmt.Errorf("writing temp file: %w", err)
 	}
 
+	editorParts := strings.Fields(editor)
+	reader := bufio.NewReader(deps.Stdin)
+
 	for {
-		cmd := exec.Command(editor, tmpFile)
-		cmd.Stdin = deps.Stdin
+		cmd := exec.Command(editorParts[0], append(editorParts[1:], tmpFile)...)
 		cmd.Stdout = os.Stderr
 		cmd.Stderr = os.Stderr
 
@@ -231,7 +235,6 @@ func runConfigEdit(args []string, deps Deps) error {
 			fmt.Fprintf(deps.Stderr, "Validation error: %s\n", err)
 			fmt.Fprint(deps.Stderr, "[r]etry editing / [d]iscard changes? (r/d) ")
 
-			reader := bufio.NewReader(deps.Stdin)
 			answer, _ := reader.ReadString('\n')
 			answer = strings.TrimSpace(strings.ToLower(answer))
 
@@ -242,7 +245,7 @@ func runConfigEdit(args []string, deps Deps) error {
 			return nil
 		}
 
-		if err := os.WriteFile(configPath, newData, 0o644); err != nil {
+		if err := os.WriteFile(configPath, newData, configMode); err != nil {
 			return fmt.Errorf("writing config: %w", err)
 		}
 		fmt.Fprintf(deps.Stderr, "Config updated: %s\n", configPath)
