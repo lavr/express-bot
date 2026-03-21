@@ -48,9 +48,9 @@ Add a second `docker/build-push-action` step for the rootless variant with `-roo
 **Files:**
 - Modify: `charts/express-botx/values.yaml`
 
-- [ ] Change `image.tag` default from `""` (appVersion) to append `-rootless` suffix by default
-- [ ] Add a comment explaining how to switch back to the alpine-based image (override `image.tag` without `-rootless` suffix)
-- [ ] Validate with `helm template charts/express-botx` — image reference should be `lavr/express-botx:<appVersion>-rootless`
+- [x] Change `image.tag` default from `""` (appVersion) to append `-rootless` suffix by default
+- [x] Add a comment explaining how to switch back to the alpine-based image (override `image.tag` without `-rootless` suffix)
+- [x] Validate with `helm template charts/express-botx` — image reference should be `lavr/express-botx:<appVersion>-rootless`
 
 ### Task 4: Verify acceptance criteria
 
