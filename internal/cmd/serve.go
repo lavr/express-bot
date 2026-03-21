@@ -277,8 +277,12 @@ Options:
 		if err := cb.Validate(); err != nil {
 			return fmt.Errorf("callbacks config: %w", err)
 		}
+		secretLookup, err := buildBotSecretLookup(cfg)
+		if err != nil {
+			return fmt.Errorf("callbacks secret lookup: %w", err)
+		}
 		cbOpts := []server.CallbackOption{
-			server.WithCallbackSecretLookup(buildBotSecretLookup(cfg)),
+			server.WithCallbackSecretLookup(secretLookup),
 		}
 		srvOpts = append(srvOpts, server.WithCallbacks(*cb, cbOpts...))
 	}
@@ -480,30 +484,47 @@ type sendResponseJSON struct {
 }
 
 
-// buildBotSecretLookup returns a function that resolves a bot_id to its secret.
-// Used for JWT verification in callback endpoints.
-func buildBotSecretLookup(cfg *config.Config) func(botID string) (string, error) {
-	return func(botID string) (string, error) {
-		if len(cfg.Bots) > 0 {
-			for _, bot := range cfg.Bots {
-				if bot.ID == botID {
-					if bot.Secret == "" {
-						return "", fmt.Errorf("bot %s has no secret configured", botID)
-					}
-					return secret.Resolve(bot.Secret)
-				}
+// buildBotSecretLookup resolves bot secrets at startup and returns a lookup function.
+// Secrets are cached to avoid repeated Vault/env lookups on every JWT verification.
+func buildBotSecretLookup(cfg *config.Config) (func(botID string) (string, error), error) {
+	cache := make(map[string]string)
+
+	if len(cfg.Bots) > 0 {
+		for _, bot := range cfg.Bots {
+			if bot.ID == "" || bot.Secret == "" {
+				continue
 			}
-			return "", fmt.Errorf("unknown bot_id %s", botID)
+			resolved, err := secret.Resolve(bot.Secret)
+			if err != nil {
+				return nil, fmt.Errorf("resolving secret for bot %s: %w", bot.ID, err)
+			}
+			cache[bot.ID] = resolved
 		}
-		// Single-bot mode
+		return func(botID string) (string, error) {
+			s, ok := cache[botID]
+			if !ok {
+				return "", fmt.Errorf("unknown bot_id %s", botID)
+			}
+			return s, nil
+		}, nil
+	}
+
+	// Single-bot mode
+	if cfg.BotSecret == "" {
+		return func(botID string) (string, error) {
+			return "", fmt.Errorf("bot %s has no secret configured", botID)
+		}, nil
+	}
+	resolved, err := secret.Resolve(cfg.BotSecret)
+	if err != nil {
+		return nil, fmt.Errorf("resolving bot secret: %w", err)
+	}
+	return func(botID string) (string, error) {
 		if cfg.BotID != botID {
 			return "", fmt.Errorf("unknown bot_id %s", botID)
 		}
-		if cfg.BotSecret == "" {
-			return "", fmt.Errorf("bot %s has no secret configured", botID)
-		}
-		return secret.Resolve(cfg.BotSecret)
-	}
+		return resolved, nil
+	}, nil
 }
 
 // runtimeBotEntries returns bot entries reflecting the actual runtime state.

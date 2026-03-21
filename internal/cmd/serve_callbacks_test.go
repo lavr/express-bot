@@ -11,7 +11,10 @@ func TestBuildBotSecretLookup_SingleBot(t *testing.T) {
 		BotID:     "bot-123",
 		BotSecret: "secret-abc",
 	}
-	lookup := buildBotSecretLookup(cfg)
+	lookup, err := buildBotSecretLookup(cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	// Known bot
 	sec, err := lookup("bot-123")
@@ -34,9 +37,12 @@ func TestBuildBotSecretLookup_NoSecret(t *testing.T) {
 		BotID:    "bot-123",
 		BotToken: "some-token",
 	}
-	lookup := buildBotSecretLookup(cfg)
+	lookup, err := buildBotSecretLookup(cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
-	_, err := lookup("bot-123")
+	_, err = lookup("bot-123")
 	if err == nil {
 		t.Fatal("expected error for bot without secret")
 	}
@@ -50,7 +56,10 @@ func TestBuildBotSecretLookup_MultiBot(t *testing.T) {
 			"gamma": {ID: "bot-ccc", Token: "token-only"},
 		},
 	}
-	lookup := buildBotSecretLookup(cfg)
+	lookup, err := buildBotSecretLookup(cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	// Known bot with secret
 	sec, err := lookup("bot-aaa")
