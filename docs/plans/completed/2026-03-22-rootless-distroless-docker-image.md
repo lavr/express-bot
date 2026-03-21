@@ -26,11 +26,11 @@ Add a second Docker image variant based on `scratch` containing only the static 
 
 Use multi-stage targets in the same Dockerfile: the existing alpine stage becomes a named target (`alpine`), and a new `rootless` target uses `scratch` with only the binary and CA certs. A `USER 65534` directive bakes the non-root user into the rootless image.
 
-- [ ] Rename the final `FROM alpine:3.21` stage to `FROM alpine:3.21 AS alpine`
-- [ ] Add a new stage `FROM scratch AS rootless` that copies CA certificates from the build stage (`/etc/ssl/certs/ca-certificates.crt`) and the binary
-- [ ] Add `USER 65534` to the rootless stage
-- [ ] Set `ENTRYPOINT ["express-botx"]` in the rootless stage
-- [ ] Verify both targets build: `docker build --target alpine .` and `docker build --target rootless .`
+- [x] Rename the final `FROM alpine:3.21` stage to `FROM alpine:3.21 AS alpine`
+- [x] Add a new stage `FROM scratch AS rootless` that copies CA certificates from the build stage (`/etc/ssl/certs/ca-certificates.crt`) and the binary
+- [x] Add `USER 65534` to the rootless stage
+- [x] Set `ENTRYPOINT ["express-botx"]` in the rootless stage
+- [x] Verify both targets build: `docker build --target alpine .` and `docker build --target rootless .`
 
 ### Task 2: Update CI to build and push both image variants
 
