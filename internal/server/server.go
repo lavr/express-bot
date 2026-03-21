@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lavr/express-botx/internal/apm"
@@ -53,6 +54,9 @@ type Server struct {
 	callbackRouter       *CallbackRouter
 	callbacksCfg         *config.CallbacksConfig
 	callbackSecretLookup func(botID string) (string, error)
+	callbackWG           sync.WaitGroup    // tracks in-flight async callback handlers
+	callbackCtx          context.Context    // cancelled on shutdown to signal async handlers
+	callbackCancel       context.CancelFunc // cancels callbackCtx
 	srv                  *http.Server
 }
 
@@ -163,12 +167,15 @@ func WithCallbacks(cfg config.CallbacksConfig, opts ...CallbackOption) Option {
 
 // New creates a Server with the given configuration.
 func New(cfg Config, sendFn SendFunc, chatResolver ChatResolver, opts ...Option) *Server {
+	cbCtx, cbCancel := context.WithCancel(context.Background())
 	s := &Server{
-		cfg:        cfg,
-		send:       sendFn,
-		chats:      chatResolver,
-		keyMap:     make(map[string]string, len(cfg.Keys)),
-		botNameSet: make(map[string]bool, len(cfg.BotNames)),
+		cfg:            cfg,
+		send:           sendFn,
+		chats:          chatResolver,
+		keyMap:         make(map[string]string, len(cfg.Keys)),
+		botNameSet:     make(map[string]bool, len(cfg.BotNames)),
+		callbackCtx:    cbCtx,
+		callbackCancel: cbCancel,
 	}
 	for _, k := range cfg.Keys {
 		s.keyMap[k.Key] = k.Name
@@ -353,6 +360,23 @@ func (s *Server) Run(ctx context.Context) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	vlog.Info("server: shutting down...")
+
+	// Signal async callback handlers to stop accepting new work.
+	s.callbackCancel()
+
+	// Wait for in-flight async callback handlers to finish (bounded by shutdownCtx).
+	done := make(chan struct{})
+	go func() {
+		s.callbackWG.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		vlog.V2("server: all async callback handlers finished")
+	case <-shutdownCtx.Done():
+		vlog.V1("server: timeout waiting for async callback handlers")
+	}
+
 	return s.srv.Shutdown(shutdownCtx)
 }
 

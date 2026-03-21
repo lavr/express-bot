@@ -402,9 +402,9 @@ go test ./internal/cmd/ -run TestBotSecretLookup -v
 
 ### 7.1 Graceful shutdown для async-обработчиков
 
-- [ ] `sync.WaitGroup` в Server для отслеживания запущенных goroutine
-- [ ] При shutdown — ожидание завершения (с timeout из `shutdownCtx`)
-- [ ] Context cancellation для running handlers
+- [x] `sync.WaitGroup` в Server для отслеживания запущенных goroutine
+- [x] При shutdown — ожидание завершения (с timeout из `shutdownCtx`)
+- [x] Context cancellation для running handlers
 
 ```
 go test ./internal/server/ -run TestGracefulShutdown -v

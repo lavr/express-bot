@@ -65,6 +65,49 @@ func newTestServerWithCallbackRouter(router *CallbackRouter) *Server {
 	return srv
 }
 
+// blockingHandler blocks until its context is cancelled or release is called.
+type blockingHandler struct {
+	mu       sync.Mutex
+	calls    int
+	started  chan struct{} // closed when Handle begins
+	release  chan struct{} // close to unblock Handle
+	ctxDone  bool         // set to true if context was cancelled during Handle
+}
+
+func newBlockingHandler() *blockingHandler {
+	return &blockingHandler{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+}
+
+func (h *blockingHandler) Type() string { return "blocking" }
+
+func (h *blockingHandler) Handle(ctx context.Context, event string, payload []byte) error {
+	h.mu.Lock()
+	h.calls++
+	if h.calls == 1 {
+		close(h.started)
+	}
+	h.mu.Unlock()
+
+	select {
+	case <-h.release:
+	case <-ctx.Done():
+		h.mu.Lock()
+		h.ctxDone = true
+		h.mu.Unlock()
+		return ctx.Err()
+	}
+	return nil
+}
+
+func (h *blockingHandler) wasContextCancelled() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.ctxDone
+}
+
 func TestHandleCommand(t *testing.T) {
 	handler := &recordingHandler{}
 	router, err := NewCallbackRouter(
@@ -391,4 +434,125 @@ func TestHandleCommandNoRules(t *testing.T) {
 	if handler.callCount() != 0 {
 		t.Fatalf("expected 0 calls, got %d", handler.callCount())
 	}
+}
+
+func TestGracefulShutdown(t *testing.T) {
+	t.Run("shutdown waits for async handlers", func(t *testing.T) {
+		bh := newBlockingHandler()
+		router, err := NewCallbackRouter(
+			[][]string{{"message"}},
+			[]bool{true},
+			map[int]CallbackHandler{0: bh},
+		)
+		if err != nil {
+			t.Fatalf("NewCallbackRouter: %v", err)
+		}
+
+		srv := newTestServerWithCallbackRouter(router)
+
+		// Send a request that starts an async handler.
+		body := `{"sync_id":"s1","command":{"body":"hello"},"from":{"group_chat_id":"g1"},"bot_id":"b1"}`
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest("POST", "/command", strings.NewReader(body))
+		srv.handleCommand(w, req)
+
+		if w.Code != 202 {
+			t.Fatalf("expected 202, got %d", w.Code)
+		}
+
+		// Wait for handler to start.
+		<-bh.started
+
+		// WaitGroup should not be done yet (handler is still running).
+		done := make(chan struct{})
+		go func() {
+			srv.callbackWG.Wait()
+			close(done)
+		}()
+
+		select {
+		case <-done:
+			t.Fatal("WaitGroup finished before handler was released")
+		case <-time.After(20 * time.Millisecond):
+			// Expected: handler still running.
+		}
+
+		// Release the handler.
+		close(bh.release)
+
+		// Now WaitGroup should complete.
+		select {
+		case <-done:
+			// OK
+		case <-time.After(time.Second):
+			t.Fatal("WaitGroup did not finish after handler release")
+		}
+	})
+
+	t.Run("shutdown cancels context for async handlers", func(t *testing.T) {
+		bh := newBlockingHandler()
+		router, err := NewCallbackRouter(
+			[][]string{{"message"}},
+			[]bool{true},
+			map[int]CallbackHandler{0: bh},
+		)
+		if err != nil {
+			t.Fatalf("NewCallbackRouter: %v", err)
+		}
+
+		srv := newTestServerWithCallbackRouter(router)
+
+		// Send a request that starts an async handler.
+		body := `{"sync_id":"s1","command":{"body":"hello"},"from":{"group_chat_id":"g1"},"bot_id":"b1"}`
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest("POST", "/command", strings.NewReader(body))
+		srv.handleCommand(w, req)
+
+		// Wait for handler to start.
+		<-bh.started
+
+		// Cancel the callback context (simulating shutdown).
+		srv.callbackCancel()
+
+		// Wait for the handler to finish (context cancellation should unblock it).
+		srv.callbackWG.Wait()
+
+		if !bh.wasContextCancelled() {
+			t.Fatal("expected handler to observe context cancellation")
+		}
+	})
+
+	t.Run("multiple async handlers tracked", func(t *testing.T) {
+		h1 := &recordingHandler{delay: 30 * time.Millisecond}
+		h2 := &recordingHandler{delay: 30 * time.Millisecond}
+		router, err := NewCallbackRouter(
+			[][]string{{"message"}, {"message"}},
+			[]bool{true, true},
+			map[int]CallbackHandler{0: h1, 1: h2},
+		)
+		if err != nil {
+			t.Fatalf("NewCallbackRouter: %v", err)
+		}
+
+		srv := newTestServerWithCallbackRouter(router)
+
+		body := `{"sync_id":"s1","command":{"body":"hello"},"from":{"group_chat_id":"g1"},"bot_id":"b1"}`
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest("POST", "/command", strings.NewReader(body))
+		srv.handleCommand(w, req)
+
+		if w.Code != 202 {
+			t.Fatalf("expected 202, got %d", w.Code)
+		}
+
+		// Wait for all async handlers to complete via WaitGroup.
+		srv.callbackWG.Wait()
+
+		if h1.callCount() != 1 {
+			t.Fatalf("handler 1: expected 1 call, got %d", h1.callCount())
+		}
+		if h2.callCount() != 1 {
+			t.Fatalf("handler 2: expected 1 call, got %d", h2.callCount())
+		}
+	})
 }

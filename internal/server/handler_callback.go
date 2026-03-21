@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -47,8 +46,10 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 
 	for _, m := range matched {
 		if m.async {
+			s.callbackWG.Add(1)
 			go func(h CallbackHandler, ev string, data []byte) {
-				if err := h.Handle(context.Background(), ev, data); err != nil {
+				defer s.callbackWG.Done()
+				if err := h.Handle(s.callbackCtx, ev, data); err != nil {
 					vlog.V1("server: async callback handler %s error for event %q: %v", h.Type(), ev, err)
 					s.errTracker.CaptureError(err)
 				}
@@ -95,8 +96,10 @@ func (s *Server) handleNotificationCallback(w http.ResponseWriter, r *http.Reque
 
 	for _, m := range matched {
 		if m.async {
+			s.callbackWG.Add(1)
 			go func(h CallbackHandler, data []byte) {
-				if err := h.Handle(context.Background(), EventNotificationCallback, data); err != nil {
+				defer s.callbackWG.Done()
+				if err := h.Handle(s.callbackCtx, EventNotificationCallback, data); err != nil {
 					vlog.V1("server: async callback handler %s error for event %q: %v", h.Type(), EventNotificationCallback, err)
 					s.errTracker.CaptureError(err)
 				}
