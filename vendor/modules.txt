@@ -30,6 +30,8 @@ github.com/getsentry/sentry-go/internal/ratelimit
 github.com/getsentry/sentry-go/internal/telemetry
 github.com/getsentry/sentry-go/internal/traceutils
 github.com/getsentry/sentry-go/internal/util
+# github.com/go-chi/chi/v5 v5.2.5
+## explicit; go 1.22
 # github.com/itchyny/gojq v0.12.18
 ## explicit; go 1.24.0
 github.com/itchyny/gojq

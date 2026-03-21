@@ -29,9 +29,9 @@ Replace the standard `http.ServeMux` with `go-chi/chi` router to get built-in ac
 **Files:**
 - Modify: `go.mod`
 
-- [ ] Run `go get github.com/go-chi/chi/v5` to add chi dependency
-- [ ] Run `go mod vendor` to vendor the dependency
-- [ ] Verify build compiles: `go build ./...`
+- [x] Run `go get github.com/go-chi/chi/v5` to add chi dependency
+- [x] Run `go mod vendor` to vendor the dependency
+- [x] Verify build compiles: `go build ./...`
 
 ### Task 2: Replace http.ServeMux with chi router and add middleware
 
