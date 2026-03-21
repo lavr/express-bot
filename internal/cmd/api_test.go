@@ -897,3 +897,216 @@ func TestStringSlice(t *testing.T) {
 		t.Errorf("expected 'a, b', got %q", s.String())
 	}
 }
+
+// --- Multipart mode ---
+
+func TestBuildAPIBody_MultipartBasic(t *testing.T) {
+	tmp := t.TempDir()
+	filePath := filepath.Join(tmp, "photo.jpg")
+	fileContent := []byte{0x89, 0x50, 0x4E, 0x47} // fake image data
+	os.WriteFile(filePath, fileContent, 0644)
+
+	body, err := buildAPIBody(apiBodyParams{
+		inputFile: "@" + filePath,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if body.method != "POST" {
+		t.Errorf("expected POST, got %s", body.method)
+	}
+	if !strings.HasPrefix(body.contentType, "multipart/form-data") {
+		t.Errorf("expected multipart/form-data, got %s", body.contentType)
+	}
+	if body.data == nil {
+		t.Fatal("expected non-nil data")
+	}
+}
+
+func TestBuildAPIBody_MultipartWithFields(t *testing.T) {
+	tmp := t.TempDir()
+	filePath := filepath.Join(tmp, "photo.jpg")
+	os.WriteFile(filePath, []byte("image-data"), 0644)
+
+	body, err := buildAPIBody(apiBodyParams{
+		inputFile: "@" + filePath,
+		fields:    []string{"group_chat_id=test-uuid", "file_name=photo.jpg"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.HasPrefix(body.contentType, "multipart/form-data") {
+		t.Errorf("expected multipart/form-data, got %s", body.contentType)
+	}
+}
+
+func TestBuildAPIBody_MultipartCustomPartName(t *testing.T) {
+	tmp := t.TempDir()
+	filePath := filepath.Join(tmp, "doc.pdf")
+	os.WriteFile(filePath, []byte("pdf-data"), 0644)
+
+	body, err := buildAPIBody(apiBodyParams{
+		inputFile: "@" + filePath,
+		partName:  "file",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.HasPrefix(body.contentType, "multipart/form-data") {
+		t.Errorf("expected multipart/form-data, got %s", body.contentType)
+	}
+	// Verify the part name is used by checking the body contains "file"
+	if !strings.Contains(string(body.data), `name="file"`) {
+		t.Errorf("expected part name 'file' in body, got: %s", string(body.data))
+	}
+}
+
+func TestBuildAPIBody_MultipartDefaultPartName(t *testing.T) {
+	tmp := t.TempDir()
+	filePath := filepath.Join(tmp, "photo.jpg")
+	os.WriteFile(filePath, []byte("data"), 0644)
+
+	body, err := buildAPIBody(apiBodyParams{
+		inputFile: "@" + filePath,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(string(body.data), `name="content"`) {
+		t.Errorf("expected default part name 'content' in body, got: %s", string(body.data))
+	}
+}
+
+func TestBuildAPIBody_MultipartTypedFieldsError(t *testing.T) {
+	tmp := t.TempDir()
+	filePath := filepath.Join(tmp, "photo.jpg")
+	os.WriteFile(filePath, []byte("data"), 0644)
+
+	_, err := buildAPIBody(apiBodyParams{
+		inputFile:   "@" + filePath,
+		typedFields: []string{"key=val"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "-F is not supported in multipart mode") {
+		t.Errorf("expected -F multipart error, got: %v", err)
+	}
+}
+
+func TestBuildAPIBody_MultipartFileNotFound(t *testing.T) {
+	_, err := buildAPIBody(apiBodyParams{
+		inputFile: "@/nonexistent/file.jpg",
+	})
+	if err == nil || !strings.Contains(err.Error(), "reading input file") {
+		t.Errorf("expected file read error, got: %v", err)
+	}
+}
+
+func TestBuildAPIBody_MultipartExplicitMethod(t *testing.T) {
+	tmp := t.TempDir()
+	filePath := filepath.Join(tmp, "photo.jpg")
+	os.WriteFile(filePath, []byte("data"), 0644)
+
+	body, err := buildAPIBody(apiBodyParams{
+		method:    "PUT",
+		inputFile: "@" + filePath,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if body.method != "PUT" {
+		t.Errorf("expected PUT, got %s", body.method)
+	}
+}
+
+func TestRunApi_MultipartUpload(t *testing.T) {
+	ts := apiTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		ct := r.Header.Get("Content-Type")
+		if !strings.HasPrefix(ct, "multipart/form-data") {
+			t.Errorf("expected multipart/form-data, got %s", ct)
+		}
+
+		// Parse multipart form
+		if err := r.ParseMultipartForm(10 << 20); err != nil {
+			t.Fatalf("failed to parse multipart: %v", err)
+		}
+
+		// Check text fields
+		if r.FormValue("group_chat_id") != "test-uuid" {
+			t.Errorf("expected group_chat_id=test-uuid, got %s", r.FormValue("group_chat_id"))
+		}
+
+		// Check file part
+		file, header, err := r.FormFile("content")
+		if err != nil {
+			t.Fatalf("expected file part 'content': %v", err)
+		}
+		defer file.Close()
+		if header.Filename != "photo.jpg" {
+			t.Errorf("expected filename photo.jpg, got %s", header.Filename)
+		}
+		data, _ := io.ReadAll(file)
+		if string(data) != "fake-image-data" {
+			t.Errorf("expected 'fake-image-data', got %q", string(data))
+		}
+
+		fmt.Fprint(w, `{"result":"uploaded"}`)
+	})
+
+	tmp := t.TempDir()
+	filePath := filepath.Join(tmp, "photo.jpg")
+	os.WriteFile(filePath, []byte("fake-image-data"), 0644)
+
+	cfgPath := apiTestConfig(t, ts.URL)
+	deps, stdout, _ := testDeps()
+
+	err := runApi([]string{
+		"--config", cfgPath,
+		"-X", "POST",
+		"--input", "@" + filePath,
+		"-f", "group_chat_id=test-uuid",
+		"/api/v3/botx/files/upload",
+	}, deps)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "uploaded") {
+		t.Errorf("unexpected output: %s", stdout.String())
+	}
+}
+
+func TestRunApi_MultipartCustomPartName(t *testing.T) {
+	ts := apiTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseMultipartForm(10 << 20); err != nil {
+			t.Fatalf("failed to parse multipart: %v", err)
+		}
+
+		// Check file part with custom name
+		file, _, err := r.FormFile("file")
+		if err != nil {
+			t.Fatalf("expected file part 'file': %v", err)
+		}
+		file.Close()
+
+		fmt.Fprint(w, `{"result":"ok"}`)
+	})
+
+	tmp := t.TempDir()
+	filePath := filepath.Join(tmp, "doc.pdf")
+	os.WriteFile(filePath, []byte("pdf-content"), 0644)
+
+	cfgPath := apiTestConfig(t, ts.URL)
+	deps, _, _ := testDeps()
+
+	err := runApi([]string{
+		"--config", cfgPath,
+		"-X", "POST",
+		"--input", "@" + filePath,
+		"--part-name", "file",
+		"/api/v3/botx/files/upload",
+	}, deps)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}

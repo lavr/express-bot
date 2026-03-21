@@ -8,8 +8,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -54,7 +56,8 @@ type apiBodyParams struct {
 	method      string    // HTTP method (or empty for auto-selection)
 	fields      []string  // -f key=value
 	typedFields []string  // -F key=value (auto type coercion)
-	inputFile   string    // --input (path, "-" for stdin)
+	inputFile   string    // --input (path, "-" for stdin, "@file" for multipart)
+	partName    string    // --part-name (default "content")
 	stdin       io.Reader // deps.Stdin
 }
 
@@ -104,8 +107,58 @@ func buildAPIBody(p apiBodyParams) (*apiBody, error) {
 		return &apiBody{data: data, method: method}, nil
 	}
 
+	// Multipart mode: --input @file
+	if isMultipart {
+		filePath := p.inputFile[1:] // strip @ prefix
+		fileData, err := os.ReadFile(filePath)
+		if err != nil {
+			return nil, fmt.Errorf("reading input file: %w", err)
+		}
+		if len(fileData) > maxRequestBodySize {
+			return nil, fmt.Errorf("request body too large (max 50MB)")
+		}
+
+		partName := p.partName
+		if partName == "" {
+			partName = "content"
+		}
+
+		var buf bytes.Buffer
+		w := multipart.NewWriter(&buf)
+
+		// Add binary file part
+		part, err := w.CreateFormFile(partName, filepath.Base(filePath))
+		if err != nil {
+			return nil, fmt.Errorf("creating multipart file part: %w", err)
+		}
+		if _, err := part.Write(fileData); err != nil {
+			return nil, fmt.Errorf("writing multipart file part: %w", err)
+		}
+
+		// Add text parts from -f fields
+		for _, f := range p.fields {
+			key, val, ok := strings.Cut(f, "=")
+			if !ok {
+				return nil, fmt.Errorf("invalid field format %q (expected key=value)", f)
+			}
+			if err := w.WriteField(key, val); err != nil {
+				return nil, fmt.Errorf("writing multipart field %q: %w", key, err)
+			}
+		}
+
+		if err := w.Close(); err != nil {
+			return nil, fmt.Errorf("closing multipart writer: %w", err)
+		}
+
+		if buf.Len() > maxRequestBodySize {
+			return nil, fmt.Errorf("request body too large (max 50MB)")
+		}
+
+		return &apiBody{data: buf.Bytes(), contentType: w.FormDataContentType(), method: method}, nil
+	}
+
 	// JSON mode: -f/-F fields without multipart
-	if hasFields && !isMultipart {
+	if hasFields {
 		obj := make(map[string]any)
 		for _, f := range p.fields {
 			key, val, ok := strings.Cut(f, "=")
@@ -213,6 +266,7 @@ func runApi(args []string, deps Deps) error {
 	var typedFields stringSlice
 	var headers stringSlice
 	var inputFile string
+	var partName string
 	var jqExpr string
 	var include bool
 	var reqTimeout time.Duration
@@ -226,7 +280,8 @@ func runApi(args []string, deps Deps) error {
 	fs.Var(&typedFields, "F", "typed field: true/false→bool, int→number, @file→contents (key=value, repeatable)")
 	fs.Var(&headers, "H", "custom HTTP header (key:value, repeatable)")
 	fs.Var(&headers, "header", "custom HTTP header (key:value, repeatable)")
-	fs.StringVar(&inputFile, "input", "", "file with request body (- for stdin)")
+	fs.StringVar(&inputFile, "input", "", "file with request body (- for stdin, @file for multipart)")
+	fs.StringVar(&partName, "part-name", "content", "multipart part name for binary file")
 	fs.StringVar(&jqExpr, "q", "", "jq expression for filtering JSON response")
 	fs.StringVar(&jqExpr, "jq", "", "jq expression for filtering JSON response")
 	fs.BoolVar(&include, "i", false, "show HTTP status and response headers")
@@ -313,6 +368,7 @@ Options:
 		fields:      fields,
 		typedFields: typedFields,
 		inputFile:   inputFile,
+		partName:    partName,
 		stdin:       deps.Stdin,
 	})
 	if err != nil {
