@@ -278,7 +278,7 @@ func Load(flags Flags) (*Config, error) {
 			}
 			vlog.V1("config: using bot %q from chat binding", chatBot)
 		} else {
-			return nil, fmt.Errorf("multiple bots configured, specify one with --bot: %s", cfg.botNames())
+			return nil, fmt.Errorf("multiple bots configured (%s), specify one with --bot or use --all", cfg.botNames())
 		}
 	}
 
@@ -433,7 +433,7 @@ func (c *Config) resolveBot(botFlag string) error {
 			c.BotTimeout = bot.Timeout
 		}
 	default:
-		return fmt.Errorf("multiple bots configured, specify one with --bot: %s", c.botNames())
+		return fmt.Errorf("multiple bots configured (%s), specify one with --bot or use --all", c.botNames())
 	}
 	return nil
 }
@@ -1186,7 +1186,7 @@ func LoadForAPI(flags Flags, manualAuth bool) (*Config, error) {
 		if cfg.hasCredentials() {
 			vlog.V1("config: using bot from env/flags (%s)", cfg.Host)
 		} else if !manualAuth {
-			return nil, fmt.Errorf("multiple bots configured, specify one with --bot: %s", cfg.botNames())
+			return nil, fmt.Errorf("multiple bots configured (%s), specify one with --bot or use --all", cfg.botNames())
 		}
 	}
 
