@@ -97,7 +97,9 @@ express-botx api -H "X-Custom: value" /api/v3/botx/chats/list
 
 ## Доступные эндпоинты
 
-Справочник эндпоинтов см. в `docs/express-api/`.
+Справочник эндпоинтов:
+- https://docs.express.ms/chatbots/developer-guide/
+- https://hackmd.ccsteam.ru/s/4IHk-iFDR#Express---Платформа-BotX-HTTPs-Bot-API-v4
 
 ## Архитектура
 

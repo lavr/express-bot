@@ -5,7 +5,7 @@
 
 ## Контекст
 
-Согласно документации eXpress BotX API, токен, полученный через `GET /api/v2/botx/bots/{bot_id}/token?signature={signature}`, **имеет неограниченный срок жизни** (docs/express-api/botx-api-endpoints.md).
+Согласно документации eXpress BotX API, токен, полученный через `GET /api/v2/botx/bots/{bot_id}/token?signature={signature}`, **имеет неограниченный срок жизни** ([документация](https://docs.express.ms/chatbots/developer-guide/)).
 
 Сейчас express-botx работает в одном режиме аутентификации:
 
