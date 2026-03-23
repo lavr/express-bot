@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +12,10 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/lavr/express-botx/internal/botapi"
+	"github.com/lavr/express-botx/internal/config"
+	"github.com/lavr/express-botx/internal/server"
 )
 
 // --- mock BotX API ---
@@ -773,5 +778,74 @@ server:
 		`{"bot":"token-bot","chat_id":"a0000000-0000-0000-0000-000000000001","message":"via token"}`)
 	if code != 200 {
 		t.Fatalf("expected 200 via token-bot, got %d: %v", code, resp)
+	}
+}
+
+// TestBotSender_NilCache verifies that botSender.Send does not panic when
+// cache is nil (the scenario from the Grafana webhook 502 bug).
+func TestBotSender_NilCache(t *testing.T) {
+	mock := newMockBotxAPI()
+	botxSrv := httptest.NewServer(mock.handler())
+	defer botxSrv.Close()
+
+	cfg := &config.Config{
+		Host:      botxSrv.URL,
+		BotID:     "bot-001",
+		BotSecret: "secret-001",
+	}
+
+	bs := &botSender{
+		cfg:    cfg,
+		client: botapi.NewClient(cfg.Host, "", cfg.HTTPTimeout()),
+		cache:  nil, // simulate failFast=false with nil cache
+	}
+
+	ctx := context.Background()
+	payload := &server.SendPayload{
+		ChatID:  "a0000000-0000-0000-0000-000000000001",
+		Message: "nil cache test",
+	}
+
+	// Must not panic; should succeed because refreshToken handles nil cache.
+	syncID, err := bs.Send(ctx, payload)
+	if err != nil {
+		t.Fatalf("Send() returned error: %v", err)
+	}
+	if syncID == "" {
+		t.Error("expected non-empty sync_id")
+	}
+
+	calls := mock.getCalls()
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 BotX API call, got %d", len(calls))
+	}
+	if calls[0].Notification == nil || calls[0].Notification.Body != "nil cache test" {
+		t.Errorf("unexpected notification: %+v", calls[0].Notification)
+	}
+}
+
+// TestAuthenticate_ReturnsCacheOnGetTokenError verifies that authenticate
+// returns a non-nil cache even when GetToken fails (the root cause fix).
+func TestAuthenticate_ReturnsCacheOnGetTokenError(t *testing.T) {
+	// Use a listener on a random port, then close it to get a refused connection.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+
+	cfg := &config.Config{
+		Host:      "http://" + addr,
+		BotID:     "bot-001",
+		BotSecret: "secret-001",
+	}
+
+	_, cache, err := authenticate(cfg)
+	if err == nil {
+		t.Fatal("expected error from authenticate with unreachable host")
+	}
+	if cache == nil {
+		t.Fatal("authenticate returned nil cache on GetToken error; this causes panic in refreshToken")
 	}
 }

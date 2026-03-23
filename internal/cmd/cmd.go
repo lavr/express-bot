@@ -175,7 +175,7 @@ func authenticate(cfg *config.Config) (string, token.Cache, error) {
 	vlog.V1("auth: cache miss, requesting new token")
 	tok, err = auth.GetToken(ctx, cfg.Host, cfg.BotID, signature, cfg.HTTPTimeout())
 	if err != nil {
-		return "", nil, fmt.Errorf("getting token: %w", err)
+		return "", cache, fmt.Errorf("getting token: %w", err)
 	}
 	vlog.V1("auth: token obtained")
 	vlog.V2("auth: token=%s", vlog.MaskBearer(tok))
@@ -203,9 +203,11 @@ func refreshToken(cfg *config.Config, cache token.Cache) (string, error) {
 		return "", err
 	}
 
-	ttl := time.Duration(cfg.Cache.TTL) * time.Second
-	cache.Set(ctx, cfg.CacheKey(), tok, ttl)
-	vlog.V1("auth: token refreshed and cached (ttl: %ds)", cfg.Cache.TTL)
+	if cache != nil {
+		ttl := time.Duration(cfg.Cache.TTL) * time.Second
+		cache.Set(ctx, cfg.CacheKey(), tok, ttl)
+		vlog.V1("auth: token refreshed and cached (ttl: %ds)", cfg.Cache.TTL)
+	}
 	return tok, nil
 }
 
