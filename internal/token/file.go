@@ -61,6 +61,20 @@ func (c *FileCache) Set(_ context.Context, key string, token string, ttl time.Du
 	return os.WriteFile(c.Path, raw, 0600)
 }
 
+func (c *FileCache) Delete(_ context.Context, key string) error {
+	data, _ := c.readAll()
+	if data == nil {
+		return nil
+	}
+	delete(data, key)
+
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(c.Path, raw, 0600)
+}
+
 func (c *FileCache) readAll() (fileCacheData, error) {
 	raw, err := os.ReadFile(c.Path)
 	if err != nil {

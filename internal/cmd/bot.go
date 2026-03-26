@@ -573,22 +573,59 @@ func runBotRm(args []string, deps Deps) error {
 }
 
 type botTokenResult struct {
-	Name  string `json:"name,omitempty"`
-	Token string `json:"token,omitempty"`
-	Error string `json:"error,omitempty"`
+	Name    string `json:"name,omitempty"`
+	Token   string `json:"token,omitempty"`
+	Status  string `json:"status,omitempty"`
+	Error   string `json:"error,omitempty"`
 }
 
 func runBotToken(args []string, deps Deps) error {
-	fs := flag.NewFlagSet("bot token", flag.ContinueOnError)
+	if len(args) == 0 {
+		printBotTokenUsage(deps.Stderr)
+		return fmt.Errorf("subcommand required: get, refresh, clear")
+	}
+
+	switch args[0] {
+	case "get":
+		return runBotTokenGet(args[1:], deps)
+	case "refresh":
+		return runBotTokenRefresh(args[1:], deps)
+	case "clear":
+		return runBotTokenClear(args[1:], deps)
+	case "--help", "-h":
+		printBotTokenUsage(deps.Stderr)
+		return nil
+	default:
+		printBotTokenUsage(deps.Stderr)
+		return fmt.Errorf("unknown subcommand: bot token %s", args[0])
+	}
+}
+
+func printBotTokenUsage(w io.Writer) {
+	fmt.Fprintf(w, `Usage: express-botx bot token <command> [options]
+
+Commands:
+  get       Get bot token (from cache or API)
+  refresh   Force-refresh token from API and update cache
+  clear     Remove cached token(s)
+`)
+}
+
+// --- bot token get ---
+
+func runBotTokenGet(args []string, deps Deps) error {
+	fs := flag.NewFlagSet("bot token get", flag.ContinueOnError)
 	fs.SetOutput(deps.Stderr)
 	var flags config.Flags
 	var all bool
+	var fresh bool
 
 	globalFlags(fs, &flags)
 	fs.BoolVar(&all, "all", false, "get tokens for all configured bots")
 	fs.BoolVar(&all, "A", false, "get tokens for all configured bots (shorthand)")
+	fs.BoolVar(&fresh, "fresh", false, "bypass cache and request a new token from API")
 	fs.Usage = func() {
-		fmt.Fprintf(deps.Stderr, "Usage: express-botx bot token [options]\n\nGet a bot token by exchanging the secret via eXpress API.\nPrints the token to stdout (useful for scripts).\n\nWith --bot or a single-bot config, uses the bot from config.\nWith --host/--bot-id/--secret, uses the provided credentials.\n\nOptions:\n")
+		fmt.Fprintf(deps.Stderr, "Usage: express-botx bot token get [options]\n\nGet a bot token. Returns cached token if available, otherwise\nrequests a new one from the API and caches it.\n\nUse --fresh to bypass cache and always request from API.\n\nOptions:\n")
 		fs.PrintDefaults()
 	}
 
@@ -600,7 +637,7 @@ func runBotToken(args []string, deps Deps) error {
 	}
 
 	if all {
-		return runBotTokenAll(flags, deps)
+		return runBotTokenGetAll(flags, fresh, deps)
 	}
 
 	cfg, err := config.Load(flags)
@@ -611,7 +648,7 @@ func runBotToken(args []string, deps Deps) error {
 		return err
 	}
 
-	tok, err := freshToken(cfg)
+	tok, err := botTokenGet(cfg, fresh)
 	if err != nil {
 		return err
 	}
@@ -621,7 +658,29 @@ func runBotToken(args []string, deps Deps) error {
 	}, botTokenResult{Token: tok})
 }
 
-func runBotTokenAll(flags config.Flags, deps Deps) error {
+func botTokenGet(cfg *config.Config, fresh bool) (string, error) {
+	if fresh {
+		tok, _, err := authenticate(cfg)
+		if err != nil {
+			return "", err
+		}
+		// authenticate already caches on miss, but if we want --fresh
+		// we need to bypass cache and re-fetch
+		if cfg.BotToken != "" {
+			return tok, nil
+		}
+		cache := newCache(cfg.Cache)
+		return refreshToken(cfg, cache)
+	}
+
+	tok, _, err := authenticate(cfg)
+	if err != nil {
+		return "", err
+	}
+	return tok, nil
+}
+
+func runBotTokenGetAll(flags config.Flags, fresh bool, deps Deps) error {
 	if perBotFlagsSet(flags) {
 		return fmt.Errorf("--all is mutually exclusive with --bot, --host, --bot-id, --secret, --token")
 	}
@@ -645,31 +704,224 @@ func runBotTokenAll(flags config.Flags, deps Deps) error {
 	for _, name := range names {
 		botCfg, err := cfg.ConfigForBot(name)
 		if err != nil {
-			results = append(results, botTokenResult{
-				Name:  name,
-				Error: err.Error(),
-			})
+			results = append(results, botTokenResult{Name: name, Error: err.Error()})
 			anyFailed = true
 			continue
 		}
 
-		tok, tokenErr := freshToken(botCfg)
+		tok, tokenErr := botTokenGet(botCfg, fresh)
 		if tokenErr != nil {
-			results = append(results, botTokenResult{
-				Name:  name,
-				Error: tokenErr.Error(),
-			})
+			results = append(results, botTokenResult{Name: name, Error: tokenErr.Error()})
 			anyFailed = true
 			continue
 		}
 
-		results = append(results, botTokenResult{
-			Name:  name,
-			Token: tok,
-		})
+		results = append(results, botTokenResult{Name: name, Token: tok})
 	}
 
-	printErr := printOutput(deps.Stdout, cfg.Format, func() {
+	return printBotTokenResults(deps, cfg.Format, results, anyFailed)
+}
+
+// --- bot token refresh ---
+
+func runBotTokenRefresh(args []string, deps Deps) error {
+	fs := flag.NewFlagSet("bot token refresh", flag.ContinueOnError)
+	fs.SetOutput(deps.Stderr)
+	var flags config.Flags
+	var all bool
+
+	globalFlags(fs, &flags)
+	fs.BoolVar(&all, "all", false, "refresh tokens for all configured bots")
+	fs.BoolVar(&all, "A", false, "refresh tokens for all configured bots (shorthand)")
+	fs.Usage = func() {
+		fmt.Fprintf(deps.Stderr, "Usage: express-botx bot token refresh [options]\n\nForce-refresh bot token: requests a new token from the API\nand updates the cache. Not available for static token configs.\n\nOptions:\n")
+		fs.PrintDefaults()
+	}
+
+	if err := fs.Parse(reorderArgs(fs, args)); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+
+	if all {
+		return runBotTokenRefreshAll(flags, deps)
+	}
+
+	cfg, err := config.Load(flags)
+	if err != nil {
+		return err
+	}
+	if err := cfg.ValidateFormat(); err != nil {
+		return err
+	}
+
+	if cfg.BotToken != "" {
+		return fmt.Errorf("cannot refresh a static token; use a secret-based config instead")
+	}
+
+	cache := newCache(cfg.Cache)
+	tok, err := refreshToken(cfg, cache)
+	if err != nil {
+		return err
+	}
+
+	return printOutput(deps.Stdout, cfg.Format, func() {
+		fmt.Fprintln(deps.Stdout, tok)
+	}, botTokenResult{Token: tok})
+}
+
+func runBotTokenRefreshAll(flags config.Flags, deps Deps) error {
+	if perBotFlagsSet(flags) {
+		return fmt.Errorf("--all is mutually exclusive with --bot, --host, --bot-id, --secret, --token")
+	}
+
+	cfg, err := config.LoadMinimal(flags)
+	if err != nil {
+		return err
+	}
+	if err := cfg.ValidateFormat(); err != nil {
+		return err
+	}
+
+	names := cfg.BotNames()
+	if len(names) == 0 {
+		return fmt.Errorf("no bots configured")
+	}
+
+	var results []botTokenResult
+	var anyFailed bool
+
+	for _, name := range names {
+		botCfg, err := cfg.ConfigForBot(name)
+		if err != nil {
+			results = append(results, botTokenResult{Name: name, Error: err.Error()})
+			anyFailed = true
+			continue
+		}
+
+		if botCfg.BotToken != "" {
+			results = append(results, botTokenResult{Name: name, Error: "cannot refresh a static token"})
+			anyFailed = true
+			continue
+		}
+
+		cache := newCache(botCfg.Cache)
+		tok, tokenErr := refreshToken(botCfg, cache)
+		if tokenErr != nil {
+			results = append(results, botTokenResult{Name: name, Error: tokenErr.Error()})
+			anyFailed = true
+			continue
+		}
+
+		results = append(results, botTokenResult{Name: name, Token: tok})
+	}
+
+	return printBotTokenResults(deps, cfg.Format, results, anyFailed)
+}
+
+// --- bot token clear ---
+
+func runBotTokenClear(args []string, deps Deps) error {
+	fs := flag.NewFlagSet("bot token clear", flag.ContinueOnError)
+	fs.SetOutput(deps.Stderr)
+	var flags config.Flags
+	var all bool
+
+	globalFlags(fs, &flags)
+	fs.BoolVar(&all, "all", false, "clear cached tokens for all configured bots")
+	fs.BoolVar(&all, "A", false, "clear cached tokens for all configured bots (shorthand)")
+	fs.Usage = func() {
+		fmt.Fprintf(deps.Stderr, "Usage: express-botx bot token clear [options]\n\nRemove cached token(s). Has no effect for static token configs\nor when caching is disabled.\n\nOptions:\n")
+		fs.PrintDefaults()
+	}
+
+	if err := fs.Parse(reorderArgs(fs, args)); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+
+	if all {
+		return runBotTokenClearAll(flags, deps)
+	}
+
+	cfg, err := config.Load(flags)
+	if err != nil {
+		return err
+	}
+	if err := cfg.ValidateFormat(); err != nil {
+		return err
+	}
+
+	status := botTokenClear(cfg)
+
+	return printOutput(deps.Stdout, cfg.Format, func() {
+		fmt.Fprintln(deps.Stdout, status)
+	}, botTokenResult{Status: status})
+}
+
+func botTokenClear(cfg *config.Config) string {
+	if cfg.BotToken != "" {
+		return "skipped: static token"
+	}
+
+	cache := newCache(cfg.Cache)
+	ctx := context.Background()
+	if err := cache.Delete(ctx, cfg.CacheKey()); err != nil {
+		return fmt.Sprintf("error: %v", err)
+	}
+	return "cleared"
+}
+
+func runBotTokenClearAll(flags config.Flags, deps Deps) error {
+	if perBotFlagsSet(flags) {
+		return fmt.Errorf("--all is mutually exclusive with --bot, --host, --bot-id, --secret, --token")
+	}
+
+	cfg, err := config.LoadMinimal(flags)
+	if err != nil {
+		return err
+	}
+	if err := cfg.ValidateFormat(); err != nil {
+		return err
+	}
+
+	names := cfg.BotNames()
+	if len(names) == 0 {
+		return fmt.Errorf("no bots configured")
+	}
+
+	var results []botTokenResult
+
+	for _, name := range names {
+		botCfg, err := cfg.ConfigForBot(name)
+		if err != nil {
+			results = append(results, botTokenResult{Name: name, Error: err.Error()})
+			continue
+		}
+
+		status := botTokenClear(botCfg)
+		results = append(results, botTokenResult{Name: name, Status: status})
+	}
+
+	return printOutput(deps.Stdout, cfg.Format, func() {
+		for _, r := range results {
+			if r.Error != "" {
+				fmt.Fprintf(deps.Stdout, "%s: ERROR %s\n", r.Name, r.Error)
+			} else {
+				fmt.Fprintf(deps.Stdout, "%s: %s\n", r.Name, r.Status)
+			}
+		}
+	}, results)
+}
+
+// --- helpers ---
+
+func printBotTokenResults(deps Deps, format string, results []botTokenResult, anyFailed bool) error {
+	printErr := printOutput(deps.Stdout, format, func() {
 		for _, r := range results {
 			if r.Error != "" {
 				fmt.Fprintf(deps.Stdout, "%s: ERROR %s\n", r.Name, r.Error)
@@ -694,7 +946,7 @@ func printBotUsage(w io.Writer) {
 Commands:
   ping    Check bot authentication and API connectivity
   info    Show bot configuration and auth status
-  token   Get bot token (exchange secret via API or print static token)
+  token   Manage bot tokens (get, refresh, clear)
 
 Config management: use "express-botx config bot" (add, rm, list).
 `)

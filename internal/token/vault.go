@@ -135,3 +135,70 @@ func (c *VaultCache) Set(ctx context.Context, key string, token string, ttl time
 
 	return nil
 }
+
+func (c *VaultCache) Delete(ctx context.Context, key string) error {
+	ctx, cancel := context.WithTimeout(ctx, vaultTimeout)
+	defer cancel()
+
+	// Read existing data
+	existing := make(map[string]interface{})
+	url := fmt.Sprintf("%s/v1/%s", c.URL, c.Path)
+
+	getReq, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	getReq.Header.Set("X-Vault-Token", c.Token)
+
+	resp, err := vaultHTTPClient.Do(getReq)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil // nothing to delete
+	}
+	if resp.StatusCode == http.StatusOK {
+		var vaultResp struct {
+			Data struct {
+				Data map[string]interface{} `json:"data"`
+			} `json:"data"`
+		}
+		json.NewDecoder(resp.Body).Decode(&vaultResp)
+		if vaultResp.Data.Data != nil {
+			existing = vaultResp.Data.Data
+		}
+	}
+
+	if _, ok := existing[key]; !ok {
+		return nil // key not present
+	}
+	delete(existing, key)
+
+	payload, err := json.Marshal(map[string]interface{}{
+		"data": existing,
+	})
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("X-Vault-Token", c.Token)
+	req.Header.Set("Content-Type", "application/json")
+
+	writeResp, err := vaultHTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer writeResp.Body.Close()
+
+	if writeResp.StatusCode != http.StatusOK && writeResp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("vault POST failed: HTTP %d", writeResp.StatusCode)
+	}
+
+	return nil
+}

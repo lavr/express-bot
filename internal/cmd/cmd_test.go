@@ -1195,7 +1195,7 @@ bots:
 `)
 	deps, stdout, _ := testDeps()
 
-	err := runBotToken([]string{"--config", cfgPath, "--all"}, deps)
+	err := runBotToken([]string{"get", "--config", cfgPath, "--all"}, deps)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1218,7 +1218,7 @@ bots:
 `)
 	deps, stdout, _ := testDeps()
 
-	err := runBotToken([]string{"--config", cfgPath, "--all", "--format", "json"}, deps)
+	err := runBotToken([]string{"get", "--config", cfgPath, "--all", "--format", "json"}, deps)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1241,7 +1241,7 @@ bots:
 `)
 	deps, _, _ := testDeps()
 
-	err := runBotToken([]string{"--config", cfgPath, "--all", "--bot", "alpha"}, deps)
+	err := runBotToken([]string{"get", "--config", cfgPath, "--all", "--bot", "alpha"}, deps)
 	if err == nil {
 		t.Fatal("expected error for --all with --bot")
 	}
@@ -1254,7 +1254,7 @@ func TestBotToken_All_EmptyConfig(t *testing.T) {
 	cfgPath := writeTestConfig(t, `{}`)
 	deps, _, _ := testDeps()
 
-	err := runBotToken([]string{"--config", cfgPath, "--all"}, deps)
+	err := runBotToken([]string{"get", "--config", cfgPath, "--all"}, deps)
 	if err == nil {
 		t.Fatal("expected error for empty config with --all")
 	}
@@ -1277,7 +1277,7 @@ bots:
 `)
 	deps, stdout, _ := testDeps()
 
-	err := runBotToken([]string{"--config", cfgPath, "--all"}, deps)
+	err := runBotToken([]string{"get", "--config", cfgPath, "--all"}, deps)
 	if err == nil {
 		t.Fatal("expected error for partial failure")
 	}
@@ -1303,7 +1303,7 @@ bots:
 `)
 	deps, stdout, _ := testDeps()
 
-	err := runBotToken([]string{"--config", cfgPath, "-A"}, deps)
+	err := runBotToken([]string{"get", "--config", cfgPath, "-A"}, deps)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1323,7 +1323,7 @@ bots:
 `)
 	deps, stdout, _ := testDeps()
 
-	err := runBotToken([]string{"--config", cfgPath, "--bot", "alpha", "--format", "json"}, deps)
+	err := runBotToken([]string{"get", "--config", cfgPath, "--bot", "alpha", "--format", "json"}, deps)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

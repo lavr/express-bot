@@ -13,7 +13,9 @@
 | `worker` | Читать сообщения из очереди и отправлять в BotX API |
 | `bot ping` | Проверить авторизацию и доступность API |
 | `bot info` | Показать информацию о боте |
-| `bot token` | Получить токен бота (для скриптов) |
+| `bot token get` | Получить токен бота (из кеша или API) |
+| `bot token refresh` | Принудительно обновить токен и записать в кеш |
+| `bot token clear` | Удалить закешированный токен |
 | `chats list` | Показать список чатов бота |
 | `chats info` | Показать детальную информацию о чате |
 | `user search` | Найти пользователя по email, HUID или AD-логину |
@@ -324,29 +326,48 @@ express-botx bot info -A --format json
 
 При `--all` / `-A` выводит таблицу (text) или массив (json) с информацией по каждому боту из конфига. Флаг `--all` несовместим с `--bot`, `--host`, `--bot-id`, `--secret`, `--token`.
 
-### bot token
+### bot token get
 
-Получает токен бота для использования в скриптах:
+Получает токен бота. По умолчанию возвращает закешированный токен, если он есть; иначе запрашивает новый через API и кеширует.
 
 ```bash
-# Из конфига (бот с secret)
-express-botx bot token --bot prod
+# Из кеша или API
+express-botx bot token get --bot prod
 
-# С явными флагами
-express-botx bot token --host h --bot-id ID --secret SECRET
+# Всегда запросить свежий (bypass кеша), но обновить кеш
+express-botx bot token get --bot prod --fresh
 
 # Использование в скриптах
-TOKEN=$(express-botx bot token --bot prod)
+TOKEN=$(express-botx bot token get --bot prod)
 
-# Если бот уже с token — просто выводит его
-express-botx bot token --bot token-bot
+# Статический токен — возвращает как есть
+express-botx bot token get --bot token-bot
 
 # Токены всех ботов
-express-botx bot token --all
-express-botx bot token -A --format json
+express-botx bot token get --all
+express-botx bot token get -A --format json
 ```
 
-При `--all` / `-A` выводит токены всех ботов из конфига. Текстовый формат: `botname: <token>` по одной строке на бота. JSON: массив объектов с полями `name`, `token`, `error`. Флаг `--all` несовместим с `--bot`, `--host`, `--bot-id`, `--secret`, `--token`.
+Флаг `--fresh` заставляет обойти кеш и запросить токен из API, при этом новый токен сохраняется в кеш. При `--all` / `-A` выводит токены всех ботов. Флаг `--all` несовместим с `--bot`, `--host`, `--bot-id`, `--secret`, `--token`.
+
+### bot token refresh
+
+Принудительно обновляет токен: всегда запрашивает новый через API и записывает в кеш. Не работает для ботов со статическим токеном.
+
+```bash
+express-botx bot token refresh --bot prod
+express-botx bot token refresh --all
+express-botx bot token refresh -A --format json
+```
+
+### bot token clear
+
+Удаляет закешированный токен. Для ботов со статическим токеном или при отключённом кеше — no-op.
+
+```bash
+express-botx bot token clear --bot prod
+express-botx bot token clear --all
+```
 
 ---
 
